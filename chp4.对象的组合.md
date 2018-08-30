@@ -84,11 +84,53 @@ MVC：模型由一个视图线程和多个执行更新操作的线程共享；
 2. 如果一个类是由多个`独立`且线程安全的状态变量组成，并且在所有操作中都不包含无效状态转换，那么可以将线程安全性委托给底层的状态变量；
 
 ## 发布底层的状态变量
+如果一个状态变量是`线程安全`的，并且没有任何`不变性条件`约束它的值，在变量的操作上也不存在任何不允许的情况，那么就可以安全的发布这个变量；
 
 ## 示例：发布状态的车辆追踪器
+getLocations():unmodifiableMap(ConcurrentHashMap)
 
 # 在现有的线程安全类中添加功能
+put-if-absent操作，用锁来保证原子性
+
 ## 客户端加锁机制
+1. 客户端加锁是指，对于某个对象X的`客户端代码`，使用X`本身用于保护其状态的锁`来保护这段客户代码；
+2. 要使用客户端加锁，你必须知道对象X使用的是哪一个锁；
+```java
+@NotThreadSafe
+public class ListHelper<E>{
+    public List<E> list=Collections.synchronizedList(new ArrayList<E>());
+    //相对于其他list的操作并不是原子的
+    public synchronized boolean putIfAbsent(E x){
+        boolean absent=!list.contains(x);
+        if(absent){
+            list.add(x);
+        }
+        return absent;
+    } 
+}
+```
+非线程安全，在错误的锁上进行了同步...
+
+```java
+@ThreadSafe
+public class ListHelper<E>{
+    public List<E> list=Collections.synchronizedList(new ArrayList<E>());
+    //相对于其他list的操作并不是原子的
+    public  boolean putIfAbsent(E x){
+        synchronized(list){
+            boolean absent=!list.contains(x);
+            if(absent){
+                list.add(x);
+            }
+            return absent;
+        }
+    } 
+}
+```
+1. 通过添加一个`原子操作`来扩展类是脆弱的，因为它将类的`加锁代码`分布到多个类中；
+2. 通过客户端加锁更加脆弱，当在哪些并不承诺遵循加锁策略的类上使用客户端加锁时要特别小心；
+3. 客户端加锁机制与扩展类机制有许多共同点，二者都是将派生类的行为与基类的实现耦合在一起；
+4. 正如扩展会破坏实现的封装性，客户端加锁也会破坏同步策略的封装性；
 ## 组合
 
 # 将同步策略文档化
