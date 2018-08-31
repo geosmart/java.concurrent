@@ -131,6 +131,33 @@ public class ListHelper<E>{
 2. 通过客户端加锁更加脆弱，当在哪些并不承诺遵循加锁策略的类上使用客户端加锁时要特别小心；
 3. 客户端加锁机制与扩展类机制有许多共同点，二者都是将派生类的行为与基类的实现耦合在一起；
 4. 正如扩展会破坏实现的封装性，客户端加锁也会破坏同步策略的封装性；
+
 ## 组合
+1. 当为现有的类添加一个`原子操作`时，有一个更好的方法：组合（Composition）;
+2. 与模拟另一个对象的`加锁策略`相比，Composition更为健壮；
+3. 事实上，我们使用了Java监视器模式来封装现有的List，并且只要在类中拥有指向底层List的`唯一外部引用`，就能确保线程安全性；
+```java
+@ThreadSafe
+public class ImprovedList<T> implements List<T>{
+    private final List<T> list;
+    public ImprovedList(List<T> list){
+        this.list=list;
+    }
+    public synchronized boolean putIfAbsent(T x){
+        boolean contains=list.contains(x);
+        if(contains){
+            list.add(x);
+        }
+        return !contains;
+    }
+    public synchronized void clear(){
+        list.clear();
+    } 
+}
+```
 
 # 将同步策略文档化
+1. 在维护线程安全性时，文档是最强大（也是最未被充分利用的）工具之一。
+2. 在文档中说明客户代码需要了解线程安全性保证，以及代码维护人员需要了解的`同步策略`；
+3. synchronized、volatile或者任何一个线程安全类都对应于某种同步策略。用于在并发访问时确保数据的完整性；
+4. 我们认为`可能是线程安全`的类通常不是线程安全的，如java.text.SimpleDataFormat并不是线程安全的，高负载情况下将导致错误；
