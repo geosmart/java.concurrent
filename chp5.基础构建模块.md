@@ -4,10 +4,27 @@
 本章介绍一些最有用的并发构建模块；
 
 # 同步容器类
+1. 同步容器类包括Vector和Hashtable,好包括在JDK中提供的Collection.synchronizedXxx等工厂方法创建的；
+2. 这些类实现线程安全的方法是：将他们的状态封装起来，并且对每个共有方法都进行同步，使得每次都只有一个线程能访问容器的状态；
 ## 同步容器类的问题
-## 迭代器与ConcurrentModificationException
-## 隐蔽迭代器
+同步容器类都是`线程安全`的，但在某些情况下需要额外的`客户端加锁`来保证`复合操作`：
+* 迭代，iterator.next()
+* 跳转，get(i)
+* 条件运算,putIfAbsent()
 
+1. 在同步容器类中，这些复合操作没有客户端加锁的情况下仍然是线程安全的；但当其他线程并发的修改容器时，他们可能会表现出意料之外的行为；
+2. 在客户端加锁可以解决ArrayIndexOutOfBoundsException问题，但要牺牲一些性能（同步阻塞降低了并发性）；
+## 迭代器与ConcurrentModificationException
+1. 在设计同步容器类的迭代器时并没有考虑并发修改的问题，并且它们表现出来的行为是failfast(ConcurrentModificationException)；
+2. 这是一种设计上的平衡，从而降低并发修改操作的监测代码对程序性能带来的影响；
+3. 在迭代过程要想避免出现ConcurrentModificationException，必须`对持有容器加锁`；
+4. 长时间对容器加锁会降低程序的可伸缩性，降低吞吐量和CPU利用率；
+5. 如果不希望对容器加锁，可以`clone容器`，在副本上进行迭代，由于副本封闭在线程内，其他线程不会在迭代期间对其进行修改，避免了抛出ConcurrentModificationException；
+6. clone容器存在明显的`性能开销`，具体使用取决于容器大小，每个元素迭代的工作，迭代操作相对于容器其他操作的调用频率，以及在响应时间和吞吐量等方面的需求；
+## 隐蔽迭代器
+toString,hashCode,equals等方法会`间接的执行迭代操作`，当容器作为另一个容器的元素或键值时，就可能会抛出ConcurrentModificationException；
+
+>正如`封装对象`的状态有助维持`不变性条件`一样，`封装对象的同步机制`同样有助于确保实施`同步策略`；
 # 并发容器
 ## ConcurrentHashMap
 ## 额外的原子Map操作
