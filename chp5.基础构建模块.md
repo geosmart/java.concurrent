@@ -2,7 +2,29 @@
 ---
 >Java平台类库包含了丰富的`并发基础构建模块`，例如线程安全的`容器类`以及各种用于协调多个`相互协作的线程控制流`的`同步工具类`（Synchronizer）。
 本章介绍一些最有用的并发构建模块；
+<!-- TOC -->
 
+- [同步容器类](#同步容器类)
+    - [同步容器类的问题](#同步容器类的问题)
+    - [迭代器与ConcurrentModificationException](#迭代器与concurrentmodificationexception)
+    - [隐蔽迭代器](#隐蔽迭代器)
+- [并发容器](#并发容器)
+    - [ConcurrentHashMap](#concurrenthashmap)
+    - [额外的原子Map操作](#额外的原子map操作)
+    - [CopyOnWriteArrayList](#copyonwritearraylist)
+- [阻塞队列和生产者-消费者队列](#阻塞队列和生产者-消费者队列)
+    - [示例：桌面搜索](#示例桌面搜索)
+    - [串行线程封闭](#串行线程封闭)
+    - [双端队列与工作密取](#双端队列与工作密取)
+- [阻塞方法与中断方法](#阻塞方法与中断方法)
+- [同步工具类](#同步工具类)
+    - [闭锁](#闭锁)
+    - [FutureTask](#futuretask)
+    - [信号量](#信号量)
+    - [栅栏](#栅栏)
+- [构建高效且可伸缩的结果缓存](#构建高效且可伸缩的结果缓存)
+
+<!-- /TOC -->
 # 同步容器类
 1. 同步容器类包括Vector和Hashtable,好包括在JDK中提供的Collection.synchronizedXxx等工厂方法创建的；
 2. 这些类实现线程安全的方法是：将他们的状态封装起来，并且对每个共有方法都进行同步，使得每次都只有一个线程能访问容器的状态；
@@ -25,10 +47,46 @@
 toString,hashCode,equals等方法会`间接的执行迭代操作`，当容器作为另一个容器的元素或键值时，就可能会抛出ConcurrentModificationException；
 
 >正如`封装对象`的状态有助维持`不变性条件`一样，`封装对象的同步机制`同样有助于确保实施`同步策略`；
+
 # 并发容器
+1. 同步容器将所有对容器状态的访问都`串行化`，以实现他们的`线程安全性`；这种方法的代价是严重`降低并发性`，当多个线程竞争容器的锁时，`吞吐量`将严重降低；
+2. 并发容器是针对多个线程并发访问设计的；
+3. Java5中新增了同步容器ConcurrentHashMap，CopyOnWriteArrayList以替代同步容器，降低风险并提高伸缩性；
+4. Java5新增了两种容器类型，Queue和BlockingQueue；
+5. Java6引入ConcurrentSkipListMap和ConcurrentSkipListSet分别作为SortedMap和SortedSet的并发替代品；
+6. Queue用来临时保存一组等待处理的元素，它提供了几种实现，包括ConcurrentLinkedQueue（传统的FIFO队列）；以及PriorityQueue（非并发的优先队列）；
+    * Queue上的操作不会阻塞，如果队列为空，那么获取元素的操作将返回空值；
+    * 通过LinkedList来实现Queue，同时需要一个Queue类来去掉List的随机访问，从而实现更高效的并发；
+7. BlockingQueue扩展了Queue，增加了可阻塞的插入和获取等操作；
+    * 如果队列为空，那么获取元素的操作将一直阻塞，直到队列中出现一个可用的元素；
+    * 如果队列已满，那么插入元素的操作将一直阻塞，直到队列中出现可用的空间
 ## ConcurrentHashMap
+1. HashMap：get或contains会调用equals方法，如果`散列函数`很糟糕会把一个散列表变成`线性链表`，当遍历很长的链表（在元素的equals调用上耗时很长）时，其他线程在这段时间内都不能访问该容器；
+2. ConcurrentHashMap：采用完全不同的加锁策略。不是将每个方法都在同一个锁上进行同步并使得每次只能有一个线程访问容器；而是使用一种`粒度更细`的加锁机制来实现更大程度的共享，这种机制称为分段锁（Lock Striping）。
+3. `分段锁（Lock Striping）`机制机制中，`任意数量的读取线程`可以并发的读取Map,执行`读取`操作的线程和执行`写入`操作的线程可以`并发的访问Map`,并且一定数量的写入线程可以`并发的修改Map`；
+4. ConcurrentHashMap带来的结果是，在并发环境下将实现更高的`吞吐量`，而在单线程环境中只损失非常小的性能；
+5. ConcurrentHashMap与其他并发容器一起增强了同步容器类：它提供的迭代器不会抛出ConcurrentModificationException，因此不需要在迭代过程中对容器加锁，`弱一致性的迭代器`可以容忍并发的修改；
+6. ConcurrentHashMap的权衡因素：对一些需要在整个Map上进行计算的方法，如Size和isEmpty，这些方法的语义被略微减弱了以反映容器的并发特性。
+7. ConcurrentHashMap的size实际上是一个估计值，因此允许size返回一个`近似值`而不是精确值，虽然这看上去令人不安，但事实上size和Empty方法在`并发环境`下的用处很小，因为他们的`返回值总是在不断变化`；因此这些操作需求被弱化，以换取对其他更重要操作的性能优化，包括get、put、containsKey、remove等；
+8. ConcurrentHashMap与HashMap、SynchronizedMap相比有更多的优势以及更少的劣势，因此在大多数情况下，用ConcurrentHashMap来替代同步Map能进一步提高代码的`伸缩性`。只有当应用程序需要`加锁Map以进行独占访问`时，才应该放弃使用ConcurrentHashMap;
 ## 额外的原子Map操作
+如果需要在现有的同步Map中添加复合原子操作，那就意味着应该考虑ConcurrentMap了；
+```java
+public interface ConcurrentMap<K,V> extends Map<K,V>{
+    V putIfAbsent(K key,V value);
+    boolean remove(K key,V value);
+    boolean replace(K key,V oldValue,V newValue);
+    V replace(K key,V newValue);
+}
+```
 ## CopyOnWriteArrayList
+CopyOnWriteArrayList用于替代同步List，在某些清洗下它提供了更好的`并发`性能，并且在`迭代`期间不需要对容器进行`加锁`或`复制`（类似的，`CopyOnWriteArraySet`的作用是替代同步的Set）；
+1. 写入时复制（ copy-on-write）容器的线程安全性在于，只要正确的发布一个事实不可变对象，那么访问该对象就不需要进一步的同步；
+2. 在每次修改时，都会创建并重新发布一个新的容器副本，从而实现可变性；
+3. `copy-on-write`容器的迭代器保留一个`指向底层基础数组的引用`，这个数组当前位于迭代器的起始位置，由于这个数组不会被修改，所以对其进行同步只需要`确保数组内容的可见性`（volatile）；
+4. 因此多个线程可以`同时对容器进行迭代`，而不会彼此干扰或者与修改容器的线程互相干扰；
+5. 显然，每当修改容器时都会复制底层数组，这需要一定的`开销`，特别是当容器规模较大时；
+6. 仅当迭代器操作远远多于修改操作时，才应该使用`copy-on-write`容器；这个准则很好的描述了`事件通知系统`：在分发通知时需要迭代已注册监听器链表，并调用每一个监听器，在大多数情况下，`注册和注销监听器的操作远少于接收事件通知的操作`；
 
 # 阻塞队列和生产者-消费者队列
 ## 示例：桌面搜索
