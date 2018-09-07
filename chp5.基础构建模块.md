@@ -17,6 +17,8 @@
     - [串行线程封闭](#串行线程封闭)
     - [双端队列(Deque)与工作密取(Work Stealing)](#双端队列deque与工作密取work-stealing)
 - [阻塞方法与中断方法](#阻塞方法与中断方法)
+    - [阻塞方法](#阻塞方法)
+    - [中断方法](#中断方法)
 - [同步工具类](#同步工具类)
     - [闭锁](#闭锁)
     - [FutureTask](#futuretask)
@@ -128,7 +130,40 @@ CopyOnWriteArrayList用于替代同步List，在某些情况下它提供了更�
 10. 当一个工作线程找到`新的任务单元`时，它会`将其放到自己队列的末尾`（或者在工作共享设计模式中，放入其他工作者线程的队列中）。当双端队列为空时，它会在另一个线程的队列队尾查找新的任务，从而`确保每个线程都保持忙碌的状态`；
 
 # 阻塞方法与中断方法
-
+阻塞方法必须处理对中断的响应
+## 阻塞方法
+1. 线程可能会阻塞或暂停执行，原因有多种：
+    * 等待I/O操作结束；
+    * 等待获得一个锁；
+    * 等待从Thread.sleep方法中醒来；
+    * 等待另一个线程的计算结果；
+2. 当线程阻塞时，它通常被挂起，并处于某种阻塞状态（`Blocked、WATING、TIMED_WAITING`）；
+3. 阻塞操作与执行时间很长的普通操作的区别在于：被阻塞的操作必须等到某个`不受它控制的事件`发生后才能继续执行，例如等待I/O操作完成，等待某个锁变成可用，或者等待外部计算结束，当某个外部事件发生后，线程被置回`RUNNABLE`状态，并可以再次被调度执行；
+4. BlockingQueue的put和take等方法会抛出`受检查异常`(Checked Exception)InterruptedException；
+5. 当某方法抛出`InterruptedException`时，表示该方法是一个`阻塞方法`，如果这个方法被中断，那么它将努力提前结束阻塞状态；
+## 中断方法
+1. `Thread`提供了interrupt方法，用于`中断线程`或者`查询线程是否已经中断`，每个线程都有一个boolean类型的属性，表示线程的中断状态(isInterrupted)，当线程中断时设置这个状态；
+2. 中断是一种`协作机制`。一个线程`不能强制其他线程停止正在执行的操作`而去执行其他的操作；
+3. 当线程A中断B时，A仅仅是要求B在执行到某个`可以暂停的地方`停止正在执行的操作（前提是B愿意停止下来）；
+4. 最常使用中断的情况就是`取消某个操作`，方法对中断请求的响应度越高，就越容易及时取消那些执行时间很长的操作；
+5. 当在代码中调用了一个将抛出`InterruptedException异常`的方法时，你自己的方法也就变成了一个`阻塞方法`，并且必须要`处理对中断的响应`。对于库代码来说，有两种基本选择：
+    * 传递InterruptedException，避开这个异常通常是最明智的策略-只需把InterruptedException传递给方法的调用者；传递异常的方法是根本不捕获该异常，或者捕获该异常，然后在执行某种简单的清理工作后再次抛出这个异常；
+    * 恢复中断。有时候不能抛出InterruptedException,例如当代码是Runnable的一部分时，在这些情况下，必须捕获InterruptedException异常，并且通过调研当前线程上的interrupted方法恢复中断状态，这样在调用栈的更高层的代码将看到引发了一个中断；
+6. 只有在一种特殊的情况下才能屏蔽中断，即对Thread的扩展，并且能控制调用栈上的所有更高层的代码；
+```java
+public class TaskRunnable implements Runnable{
+    BlockingQueue<Task> queue;
+    ...
+    public void run(){
+        try {
+            processTask(queue.take());
+        } catch (InterruptedException e) {
+            //恢复被中断的状态
+            Thread.currentThread().interrupt();
+        }
+    }
+}
+```
 # 同步工具类
 ## 闭锁
 ## FutureTask
