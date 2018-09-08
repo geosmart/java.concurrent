@@ -20,10 +20,10 @@
     - [阻塞方法](#阻塞方法)
     - [中断方法](#中断方法)
 - [同步工具类](#同步工具类)
-    - [闭锁](#闭锁)
+    - [闭锁（Latch）](#闭锁latch)
     - [FutureTask](#futuretask)
-    - [信号量](#信号量)
-    - [栅栏](#栅栏)
+    - [信号量(Semaphore)](#信号量semaphore)
+    - [栅栏(Barrier)](#栅栏barrier)
 - [构建高效且可伸缩的结果缓存](#构建高效且可伸缩的结果缓存)
 
 <!-- /TOC -->
@@ -147,9 +147,9 @@ CopyOnWriteArrayList用于替代同步List，在某些情况下它提供了更�
 3. 当线程A中断B时，A仅仅是要求B在执行到某个`可以暂停的地方`停止正在执行的操作（前提是B愿意停止下来）；
 4. 最常使用中断的情况就是`取消某个操作`，方法对中断请求的响应度越高，就越容易及时取消那些执行时间很长的操作；
 5. 当在代码中调用了一个将抛出`InterruptedException异常`的方法时，你自己的方法也就变成了一个`阻塞方法`，并且必须要`处理对中断的响应`。对于库代码来说，有两种基本选择：
-    * 传递InterruptedException，避开这个异常通常是最明智的策略-只需把InterruptedException传递给方法的调用者；传递异常的方法是根本不捕获该异常，或者捕获该异常，然后在执行某种简单的清理工作后再次抛出这个异常；
-    * 恢复中断。有时候不能抛出InterruptedException,例如当代码是Runnable的一部分时，在这些情况下，必须捕获InterruptedException异常，并且通过调研当前线程上的interrupted方法恢复中断状态，这样在调用栈的更高层的代码将看到引发了一个中断；
-6. 只有在一种特殊的情况下才能屏蔽中断，即对Thread的扩展，并且能控制调用栈上的所有更高层的代码；
+    * `传递InterruptedException`，避开这个异常通常是最明智的策略-只需把InterruptedException传递给方法的调用者；传递异常的方法是根本不捕获该异常，或者捕获该异常，然后在执行某种简单的清理工作后再次抛出这个异常；
+    * `恢复中断`。有时候`不能抛出InterruptedException`,例如当代码是Runnable的一部分时，在这些情况下，必须捕获InterruptedException异常，并且通过调研当前线程上的interrupted方法恢复中断状态，这样在调用栈的更高层的代码将看到引发了一个中断；
+6. 只有在一种特殊的情况下才能`屏蔽中断`，即对Thread的扩展，并且能控制调用栈上的所有更高层的代码；
 ```java
 public class TaskRunnable implements Runnable{
     BlockingQueue<Task> queue;
@@ -165,9 +165,74 @@ public class TaskRunnable implements Runnable{
 }
 ```
 # 同步工具类
-## 闭锁
+1. 在容器类中，`阻塞队列`是一种独特的类，他们不仅能作为`保存对象`的容器，还能`协调生产者和消费者等线程之间的控制流`，因为take和put等方法将阻塞，直到队列达到期望的状态（队列即非空，也非满）；
+2. 同步工具类可以是任何一个对象，只要它根据自身的状态来协调线程的控制流；
+3. 阻塞队列可以作为同步工具类，其他类型的同步工具类还包括信号量（Semaphore）、栅栏（Barrier）以及闭锁（Latch）；
+4. 所有的同步工具类都包含一些特定的结构化属性：它们封装了一些状态，这些状态将决定执行同步工具类的线程是继续执行还是等待，此外还提供了一些方法对状态进行操作，以及另一些方法用于高效地等待同步工具进入到预期状态；
+
+## 闭锁（Latch）
+1. 闭锁是一种同步工具类，可以延迟线程的进度直到其到达终止状态；
+2. 闭锁的作用相当于一扇门：
+    * 在闭锁到达结束状态之前，这扇门一直是关闭的，并且没有任何线程能通过；
+    * 当到达结束状态时，这扇门会打开并允许所有的线程通过；
+    * 当闭锁到达结束状态后，将不会再改变状态，因此这扇门将永远保持打开状态；
+3. 闭锁可以用来确保某些活动直到其他活动都完成后才继续执行，例如：
+    * 确保某个计算在其所需要的所有资源都被初始化之后才继续执行。二元闭锁（包括2个状态）可以用来表示`资源R已经被初始化`，而所有需要R操作都必须在这个闭锁上等待；
+    * 确保某个操作在其`依赖的所有服务`都已经启动之后才启动。每个服务都有一个相关的二元闭锁；
+    * 等待直到某个操作的所有参与者（如多人游戏中的所有玩家）都就绪后再继续执行，在这种情况下，当所有玩家都准备就绪时，闭锁将到达结束状态；
+4. CountDownLatch是一种灵活的闭锁实现，可以在上述各种情况中使用，它可以使一个或多个线程等待一组事件发生。
+    * 闭锁状态包括一个计数器，该计数器被初始化成一个正数，表示需要等待的事件数量；
+    * countDown方法递减计数器，表示有一个事件发生了；
+    * await方法等待所有计数器达到0，这表示所有需要等待的事件都已经发生了；
+    * 如果计数器的值非0，那么await会一直阻塞直到计数器为0，或者等待中的线程中断，或者等待超时； 
+5. 示例：统计线程并发执行时的实际消耗时间
+```java
+public class TestHarness{
+    public long timeTasks(int nThreads,final Runnable task) throw InterruptedException{
+        //起始门
+        final CountDownLatch startGate=new CountDownLatch(1);
+        //结束门
+        final CountDownLatch endGate=new CountDownLatch(nThreads);
+
+        for(int i=0;i<nThreads;i++){
+            Thread t=new Thread(){
+                public void run(){
+                    try {
+                        startGate.await();
+                        try {
+                            task.run();
+                        } catch (Exception e) {
+                            endGate.countDown();
+                        }
+                    } catch (InterruptedException ignored) {
+                        
+                    }
+                }
+            }
+        }
+        long start=System.nanoTime();
+        startGate.countDown();
+        long end=System.nanoTime();
+        endGate.await();
+        return end-start;
+    }
+}
+```
 ## FutureTask
-## 信号量
-## 栅栏
+1. FutureTask也可以用做闭锁。FutureTask实现了Future语义，表示一种抽象的可生成结果的计算；
+2. FutureTask表示的计算是通过Callable实现的，相当于一种可生成结果的Runnable，并且可以处于以下3种状态：等待运行（Waiting to run），正在运行（Running）和运行完成（Completed）；
+3. 执行完成表示计算的所有可能结束的方式，包括正常结束，由于取消结束和由于异常结束等。当Future进入完成状态后，它会永远停止在这个状态上。
+4. FutureTask的get的行为取决于任务的状态。如果任务已经完成，那么get会立即返回结果；否则get将阻塞直到任务进入完成状态，然后返回结果或者抛出异常；
+5. FutureTask将计算结果从执行计算的线程传递到获取这个结果的线程，而FutureTask的规范确保了这种传递能实现结果的安全发布；
+6. FutureTask在Executor中表示异步任务，此外还可以用来表示一些时间从较长的计算，这些计算可以在使用结果之前启动（通过提前启动计算，减少获取结果的等待时间）；
+```java
+public class Preloader{
+    
+}
+``` 
+
+## 信号量(Semaphore)
+
+## 栅栏(Barrier)
 
 # 构建高效且可伸缩的结果缓存
