@@ -219,20 +219,175 @@ public class TestHarness{
 }
 ```
 ## FutureTask
-1. FutureTask也可以用做闭锁。FutureTask实现了Future语义，表示一种抽象的可生成结果的计算；
-2. FutureTask表示的计算是通过Callable实现的，相当于一种可生成结果的Runnable，并且可以处于以下3种状态：等待运行（Waiting to run），正在运行（Running）和运行完成（Completed）；
+1. FutureTask也可以用做闭锁。FutureTask实现了Future语义，表示一种抽象的`可生成结果的计算`；
+2. FutureTask表示的计算是通过`Callable`实现的，相当于一种可生成结果的Runnable，并且可以处于以下3种状态：等待运行（Waiting to run），正在运行（Running）和运行完成（Completed）；
 3. 执行完成表示计算的所有可能结束的方式，包括正常结束，由于取消结束和由于异常结束等。当Future进入完成状态后，它会永远停止在这个状态上。
-4. FutureTask的get的行为取决于任务的状态。如果任务已经完成，那么get会立即返回结果；否则get将阻塞直到任务进入完成状态，然后返回结果或者抛出异常；
-5. FutureTask将计算结果从执行计算的线程传递到获取这个结果的线程，而FutureTask的规范确保了这种传递能实现结果的安全发布；
-6. FutureTask在Executor中表示异步任务，此外还可以用来表示一些时间从较长的计算，这些计算可以在使用结果之前启动（通过提前启动计算，减少获取结果的等待时间）；
+4. FutureTask的`get`的行为取决于任务的状态。如果任务已经完成，那么get会立即返回结果；否则get将`阻塞`直到任务进入完成状态，然后返回结果或者抛出异常；
+5. FutureTask将计算结果从执行计算的线程传递到获取结果的线程，而FutureTask的规范确保了这种传递能实现结果的安全发布；
+6. FutureTask在Executor中表示异步任务，此外还可以用来表示一些时间从较长的计算，这些计算可以在使用结果之前启动；
+7. 示例：Preloader使用了FutureTask来执行一个高开销的计算，并且计算结果将在稍后使用。通过提前启动计算，可以减少结果的等待时间；
 ```java
 public class Preloader{
+    private final FutureTask<ProductInfo> future=new FutureTask<ProductInfo>(
+        new Callable<ProductInfo>(){
+            public ProductInfo call() throws DataLoadException(){
+                return loadProductInfo();
+            }
+        }
+    );
     
+    private final Thread thread=new Thread(future);
+    
+    public void start(){
+        thread.start();
+    }
+
+    //如果数据已经加载，那么将返回这些数据，否则将阻塞等待加载完成后返回；
+    public ProductInfo get() throws DataLoadException,InterruptedException{
+        try {
+            future.get();
+        } catch (ExecutionException e) {
+            Throwable cause=e.getCause();
+            if(cause instanceof DataLoadException){
+                throw (DataLoadException)cause;
+            }else{
+                throw launderThrowable(cause);
+            }
+        }
+    }
+
+    public static RuntimeException launderThrowable(Throwable t){
+        if (t instance of RuntimeException){
+            return (RuntimeException)t;
+        }else if(t instanceof Error){
+            throw (Error)t
+        }else{
+            throw new IllegalStateException("Not unchecked",t);
+        }
+    }
 }
 ``` 
-
 ## 信号量(Semaphore)
+1. 计数信号量(Counting Semaphore)用来控制`同时访问`某个特定资源的`操作数量`,或者`同时执行`某个指定操作的数量；
+2. 计数信号量还可以用来实现某种`资源池`，或者对容器施加`边界`；
+3. Semaphore中管理着一组虚拟的许可(permit)，许可的初始数量可以通过构造函数指定；
+4. 在执行操作时首先获得permit，并在使用之后释放permit；如果没有permit,那么acquire将阻塞直到有permit(或者被中断或者操作超时);
+5. release方法将放缓一个permit给信号量；
+6. 计算信号量的一种简化形式是二值信号量，即初始值为1的Semaphore。二值信号量可以用做Mutex,并具备不可重入的加锁语义：谁拥有这个唯一的许可，谁就拥有了互斥锁；
+7. Semaphore可以用于实现资源池，例如数据库连接池；
+    * 构造一个固定长度的资源池，当池为空时，请求资源将会失败，但真正希望看到的行为是阻塞而非失败，并且当池非空时解除阻塞；
+    * 如果将Semaphore的计数值初始化为池的大小，并且从池中获取一个资源之前首先调用acquire方法获取一个permit，在将资源返回给池之后调用release释放许可，那么acquire将一直阻塞直到资源池不为空；（更简单的方法是使用BlockingQueue）
+8. SemaPhore可将任何一种容器变成有界阻塞容器，如BoundedHashSet为容器设置边界
+```java
+public class BoundedHashSet<T>{
+    private final Set<T> set;
+    private final Semaphore sem;
+
+    public BoundedHashSet(int boud){
+        this.set=Collections.synchronizedSet(new HashSet<T>());
+        sem=new Semaphore(bound);
+    }
+
+    public boolean add(T o)throws InterruptedException{
+        sem.acquire();
+        boolean warAdded=false;
+        try {
+            wasAdded=set.add(o);
+            return wasAdded;
+        } finally {
+            //未添加成功，立即释放许可；
+            if(!wasAdded){
+                sem.release();
+            }
+        }
+    }
+
+    public boolean remove(Object o){
+        boolean wasRemoved=set.remove(o);
+        if(wasRemoved){
+            sem.release();
+        }
+        return wasRemoved;
+    }
+
+}
+```
+底层的Set不知道关于边界的任何信息，这是由BoundedSet来处理的；
 
 ## 栅栏(Barrier)
+1. 通过闭锁来启动一组相关的操作，或者等待一组相关的操作结束；闭锁是一次性对象，一旦进入终止状态，就不能被重置；
+2. 栅栏（Barrier）类似于闭锁，它能阻塞一组线程直到某个事件发生；
+3. Barrier与闭锁的关键区别在于，`所有线程`必须`同时`到达栅栏位置，才能继续执行；
+4. `闭锁`用于等待其他`事件`，而`Barrier`用于等待其他`线程`；
+5. Barrier用于实现一些协议，如几个家庭决定在某个地方集合："所有人6点在麦丹劳碰头，到了以后要等待其他人，之后再讨论下一步要做的事情"；
+6. `CyclicBarrier`可以使`一定数量`的参与方`反复`的在栅栏位置汇集，它在`并行迭代算法`中非常有用；
+    * 这种算法通常将一个问题拆分成一系列相互独立的子问题；
+    * 当线程到达Barrier位置时将调用await方法，这个方法将`阻塞`直到所有线程到达Barrier位置；
+    * 如果线程到达了Barrier位置，那么Barrier将打开，此时所有的线程都被释放，而Barrrier将被重置以便下次使用；
+    * 如果对await的调用超时，或者await阻塞的线程被中断，那么Barrier就被认为是打破了，所有阻塞的await调用都将中止并抛出BrokenBarrierException；
+    * 如果成功的通过Barrier，那么await将为每个线程返回一个唯一的`到达索引号`，我们可以通过这些索引来`选举`产生一个领导线程，并在下一次迭代中由该领导线程执行一些特殊的工作；
+    * CyclicBarrier还可以使你将一个栅栏操作传递给构造函数，这是一个Runnable，当成功通过栅栏时会（在一个子任务线程）执行它，但在阻塞线程被释放之前是不能执行的；
+7. 在`模拟程序`中通常需要使用栅栏，例如某个步骤中的计算可以并行执行，但必须等到该步骤中的所有计算都执行完毕才能计算下一个步骤。
+8. 例如，在n-body粒子模拟系统中，每个步骤都根据其他粒子的位置和属性来计算各个粒子的新位置，通过在每2次更新之间等待栅栏，能够确保在第K步中的所有更新操作都已经计算完毕，才进入第k+1步；
+9. 示例：通过Barrier来计算细胞的自动化模拟；
+```java
+//通过Barrier来计算细胞的自动化模拟
+public class CellularAutomata{
+    private final Board mainBoard;
+    private final CyclicBarrier barrier;
+    private final Worker[] workers;
+
+    public CellularAutomata(Board board){
+        this.mainBoard=board;
+        //在这种不涉及IO操作或共享数据访问的计算问题中，当线程数为N_cpu或N_cpu+1时将获得最优的吞吐量；更多的先线程不会带来任何帮助，甚至会因为多个线程将会在CPU和内存等资源上发生竞争而降低性能。
+        int count=Runtime.getRuntime().avaliableProcessors();
+        this.barrier=new CyclicBarrier(count,new Runnable(){
+            public void run(){
+                mainBoard.commitNewValues();
+            }
+        });
+        //将任务分解成一定数量的子问题，每个子问题分配一个线程
+        this.workers=new Worker(count);
+        for(int i=0;i<count;i++){
+            //工作线程为各子问题中的所有细胞计算新值
+            worker[i]=new Worker(mainBoard.getSubBoard(count,i));
+        }
+    }
+    private class Worker implements Runnable{
+        private final Board board;
+        public Worker(Board board){
+            this.board=board;
+        }
+        public void run(){
+            while(!board.hasCoverged){
+                for(int x=0;x<board.getMaxX();x++){
+                    for(int y=0;y<board.getMaxY();y++){
+                        board.setNewValue(x,y,compute(x,y));
+                    }
+                }
+                try {
+                    barrier.await();
+                } catch (InterruptionException e) {
+                    return;
+                }catch (BrokenBarrierException ex) {
+                    return;
+                }
+            }
+        }
+    }
+
+    public void start(){
+        for(int i=0;i<workers.length;i++){
+            new Thread(workers(i).start());
+        }
+        mainBoard.wartForCovergence();
+    }
+}
+```
+10. 另一种形式的栅栏是Exchange,它是一种`两方（Two-Party）栅栏`，各方在栅栏位置上交换数据。当`两方执行不对称的操作`时，Exchanger会非常有用，例如当一个线程想缓冲器写入数据，而另一个线程从缓冲区读取数据；这些线程可以使用Exchange来汇合，并将满的缓冲区与空的缓冲区交换。当两个线程通过Exchange交换对象时，这种交换就把两个对象安全的发布给另一方；
+11. 数据交换的时机取决于应用程序的`响应需求`：
+* 当缓冲区被填满时，由填充任务进行交换；
+* 当缓冲区为空时，由清空任务进行交换；
+* 这样会把需要`交换的次数`降到最低，但如果新数据的到达率不可预测时，那么一些数据的处理过程就将`延迟`，另一个方法是，不仅当缓冲区被填满时进行交换，并且当缓冲区被`填充到一定程度并保持一定时间`后，也进行交换；
 
 # 构建高效且可伸缩的结果缓存
