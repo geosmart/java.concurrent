@@ -119,7 +119,7 @@ CopyOnWriteArrayList用于替代同步List，在某些情况下它提供了更�
 
 ## 双端队列(Deque)与工作密取(Work Stealing)
 1. Java6中新增了两种容器类型：Deque(发音deck,double ended queue的缩写)和BlockingDeque，它们分别对Queue和BlockingQueue进行了扩展
-2. Deque是一个双端队列，实现了在队列头和队列尾的高效插入和删除，具体包括ArrayDeque和LinkedBlockingQueue；
+2. Deque是一个双端队列，实现了在队列头和队列尾的高效插入和删除，具体包括ArrayDeque和LinkedBlockingDeque；
 3. 正如阻塞队列适用于P-C模式，双端队列同样适用于另外一种相关模式，即工作密取（Work Stealing）；
 4. 在生产者-消费者模式中，所有消费者`共享`一个工作队列，而在工作密取的设计中，每个消费者都有各自的`双端队列`；
 5. 如果一个消费者完成了自己双端队列中的全部工作，它可以从其他消费者的双端队列末尾秘密的获取工作；
@@ -391,3 +391,176 @@ public class CellularAutomata{
 * 这样会把需要`交换的次数`降到最低，但如果新数据的到达率不可预测时，那么一些数据的处理过程就将`延迟`，另一个方法是，不仅当缓冲区被填满时进行交换，并且当缓冲区被`填充到一定程度并保持一定时间`后，也进行交换；
 
 # 构建高效且可伸缩的结果缓存
+1. 几乎所有的应用程序都会使用某种形式的缓存。重用之前的计算结果能降低延迟，提高吞吐量，但却需要消耗更多的内存；
+2. 缓存看上去非常简单，然而简单的缓存可能会将`性能瓶颈`变成`可伸缩性瓶颈`，即使缓存是用于提升线程的性能；
+3. 本节将开发一个高效且可伸缩的缓存，用于改进一个高计算开销的函数；
+4. 使用HashMap和同步机制来初始化缓存
+```java
+public interface Computable<A,V>{
+    V compute(A arg)throws InterruptedException;
+}
+
+public class ExpensiveFunction implements Computable<String,BigInteger>{
+    public BigInteger compute(String arg){
+        //在经过长时间计算后
+        return new BigInteger(arg);
+    }
+}
+
+public class Memorizer1<A,V> implements Computable<A,V>{
+    @GuardedBy("this")
+    private final Map<A,V> cache =new HashMap<A,V>();
+    private final Computable<A,V> c;
+
+    public Memorizer1(Computable<A,V> c){
+        this.c=c;
+    }
+    //由于HashMap非线程安全，对整个compute方法进行同步，这种方法能确保线程安全性，但会带来一个明显的可伸缩性问题：每次只有1个线程能执行compute
+    //多线程并行compute时，可能会导致阻塞；使得compute的计算时间比没有Memorizer1的计算时间更长
+    public synchronized V compute(A arg)throws InterruptedException{
+        V result=cache.get(arg);
+        if(result==null){
+            result=c.compute(arg);
+            cache.put(arg,result);
+        }
+        return result;
+    }
+}
+```
+5. 使用ConcurrentHashMap替换HashMap
+```java
+public class Memorizer2<A,V> implements Computable<A,V>{
+    private final Map<A,V> cache =new ConcurrentHashMap<A,V>();
+    private final Computable<A,V> c;
+
+    public Memorizer2(Computable<A,V> c){
+        this.c=c;
+    }
+    //由于ConcurrentHashMap线程安全，compute方法不需要同步，避免了并行compute时出现的串行访问情况；
+    //但是当并行compute时存在一个安全漏洞，即可能会导致重复计算（如果计算开销很大，而其他线程不知道这个计算正在进行），并得到相同的值；
+    public V compute(A arg)throws InterruptedException{
+        V result=cache.get(arg);
+        if(result==null){
+            result=c.compute(arg);
+            cache.put(arg,result);
+        }
+        return result;
+    }
+}
+```
+6. 基于FutureTask的Memorizing封装器 
+引入FutureTask来处理`线程X正在计算`这种情况，FutureTask表示一个计算的过程，这个计算过程可能已经完成，也可能正在进行；如果有结果可用，那么FutureTask将立即返回，否则会一直阻塞直到结果计算出来再将其返回；
+```java
+public class Memorizer3<A,V> implements Computable<A,V>{
+    //高效并发
+    private final Map<A,V> cache =new ConcurrentHashMap<A,Future<V>>();
+    private final Computable<A,V> c;
+
+    public Memorizer3(Computable<A,V> c){
+        this.c=c;
+    }
+    //由于ConcurrentHashMap线程安全，compute方法不需要同步，避免了并行compute时出现的串行访问情况；
+    //但是当并行compute时存在一个安全漏洞，即可能会导致重复计算（如果计算开销很大，而其他线程不知道这个计算正在进行），并得到相同的值；
+    public V compute(final A arg)throws InterruptedException{
+        //缓存
+        Future<V> f=cache.get(arg);
+        //if为非原子操作（先检查再执行），仍然存在重复计算获得相同值的安全漏洞；
+        //复合操作是在底层的Map对象上执行的，而这个对象无法通过加锁来确保原子性
+        if(f==null){
+            Callable eval=new Callable<V>(){
+                public V call() throws InterruptedException{
+                    return c.compute(arg);
+                }
+            }
+            //将FutureTask作为缓存值
+            FutureTask<V> ft=new FutureTask<V>(eval);
+            f=ft;
+            cache.put(arg,ft);
+            //异步计算
+            f.run();
+        }
+        try{
+            //阻塞获取结果,或立即返回
+            return f.get();
+        }catch (ExecutionException e){
+            throw launderThrowable(e.getCause);
+        }
+    }
+}
+```
+
+7. Memorizer最终实现：复合操作的原子化
+```java
+public class Memorizer<A,V> implements Computable<A,V>{
+    //高效并发
+    private final ConcurrentMap<A,V> cache =new ConcurrentHashMap<A,Future<V>>();
+    private final Computable<A,V> c;
+
+    public Memorizer(Computable<A,V> c){
+        this.c=c;
+    }
+    //由于ConcurrentHashMap线程安全，compute方法不需要同步，避免了并行compute时出现的串行访问情况；
+    //但是当并行compute时存在一个安全漏洞，即可能会导致重复计算（如果计算开销很大，而其他线程不知道这个计算正在进行），并得到相同的值；
+    public V compute(final A arg)throws InterruptedException{
+        while true{
+            //缓存
+            Future<V> f=cache.get(arg);
+            //if为非原子操作（先检查再执行），仍然存在重复计算获得相同值的安全漏洞；
+            //复合操作是在底层的Map对象上执行的，而这个对象无法通过加锁来确保原子性
+            if(f==null){
+                Callable eval=new Callable<V>(){
+                    public V call() throws InterruptedException{
+                        return c.compute(arg);
+                    }
+                }
+                //将FutureTask作为缓存值
+                FutureTask<V> ft=new FutureTask<V>(eval);
+                //若不存在则添加，否则get当前值
+                f=cache.putIfAbsent(arg,ft);
+                if(f==null){
+                    f=ft;
+                    //异步计算
+                    f.run();
+                }
+            }
+            try{
+                //阻塞获取结果,或立即返回
+                return f.get();
+            }catch (CancellationException e){
+                //如果某个计算被取消或失败，那么在计算这个结果时将指明计算过程被取消或者失败
+                cache.remove(arg,f);
+            }catch (ExecutionException e){
+                throw launderThrowable(e.getCause);
+            }
+        }
+    }
+}
+```
+* 当缓存的是Future而不是值时，将导致`缓存污染`（Cache Pollution）问题；
+* 本处未处理`缓存逾期`问题，`缓存清理`问题；
+8. 在因式分解Servlet中使用Momorizer来缓存结果
+```java
+@ThreadSafe
+public class Factorizer implements Servlet{
+
+    private final Computable<BigInteger,BigInteger[]> c=new Computable<BigInteger,BigInteger[]>(){
+        public BigInteger[] compute(BigInteger arg){
+            return factor(arg);
+        }
+    }
+
+    private final Computable<BigInteger,BigInteger[]> cache=new Memorizer<BigInteger,BigInteger[]>(c);
+    
+    public void service(ServletRequest req,ServletResponse resp){
+        try{
+            BigInteger i=extractFromRequest(req);
+            encodeIntoResponse(resp,cache.compute(i));
+        }catch(InterruptedException e){
+            encodeError(resp,"factorization interrupted");
+        }
+    }
+}
+```
+
+
+
