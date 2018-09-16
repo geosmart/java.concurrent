@@ -4,7 +4,7 @@
 任务通常是抽象的且离散的工作单元，通过把应用程序的工作分解到多个任务中，可以`简化程序的组织结构`，
 提供一种`自然的事务边界`来`优化错误的恢复过程`，
 提供一种`自然的并行工作结构`来提升`并发性`；
->
+
 <!-- TOC -->
 
 - [在线程中执行任务](#在线程中执行任务)
@@ -25,6 +25,7 @@
     - [CompletionService:Executor与BlockingQueue](#completionserviceexecutor与blockingqueue)
     - [示例：使用CompletionService实现页面渲染器](#示例使用completionservice实现页面渲染器)
     - [示例：旅行预订门户网站](#示例旅行预订门户网站)
+- [小结](#小结)
 
 <!-- /TOC -->
 
@@ -182,10 +183,195 @@ class LifeCycleWebServer{
 4. DelayQueue管理着一组`Delay`对象，每个Delay对象都有一个相应的延迟时间：在DelayQueue中，只有某个元素`逾期`后，才能从DelayQueue中执行`take`操作。从DelayQueue中返回的对象将根据它们的延迟时间进行排序；
 
 # 找出可利用的并行性
+1. 在大多数服务器应用程序中都存在一个明显的`任务边界`：单个任务请求；
+2. 有时候任务边界并非是显而易见的，例如在很多桌面应用程序中仍可能存在可发掘的并行性，如数据库服务器；
 ## 示例：串行的页面渲染器
+```java
+public class SingleThreadRender{
+    void renderPage(CharSequence source){
+        renderText(source);
+        List<ImageData> imgData=new ArrayList<ImageData>();
+        for(ImageInfo imgInfo:scanForImageinfo(source)){
+            //图片下载过程中，大部分时间都是在等待I/O操作完成，在这期间CPU几乎空闲；
+            imgData.add(imgInfo.donwloadImage());
+        }
+        for(ImageData data:imageData){
+            renderImage(data);
+        }
+    }
+}
+```
+通过将任务分解为多个独立的任务并发执行，能获得更高的CPU利用率和响应灵敏度；
 ## 携带结果的任务Callable与Future
+1. Executor框架使用Runnable作为其基本的任务表示形式；Runnable是一种有很大局限的抽象，虽然run能写入到日志文件或者将结果放入某个共享的数据结构，但它不能返回一个值或抛出一个受检查异常；
+2. 许多任务实际上都是存在延迟的计算-执行数据库查询，从网络上获取资源，或者计算某个复杂的功能，对于这些任务，Callable是一种更好的抽象：它任务主入口（即call）将返回一个值，并可能抛出一个异常；
+3. Runnable和Callable描述的都是抽象的计算任务。这些任务通常都是有范围的，即都有一个明确的起点，并且最终会结束；
+4. Future表示一个任务的声明周期，并提供了相应的方法来判断是否已经完成或取消，以及任务的结果和取消任务；
+    * future任务的get方法会阻塞直到任务完成，或者抛出一个执行异常/取消异常/超时异常；
+    * 可通过ExecutorService.submit(task)返回一个Future任务；
+    * 可显示的为某个Callable或Runnable实例化一个Futuretask；
+    * 可通过AbstractExecutorService.newTaskFor(task)方法创建一个FutureTask；
+5. Callable与Future接口
+```java
+public interface Callable<V>{
+    V call() throws Exception;
+}
+
+public interface Future<V>{
+    boolean cancle(boolean mayInterruptIfRunning);
+    boolean isCancelled();
+    boolean isDone();
+    V get() throws InterruptedException,ExecutionException,CancellationException;
+    V get(long timeout,TimeUnit unit)throws InterruptedException,ExecutionException,CancellationException, TimeoutException;
+}
+```
+6. ThreadPoolExecutor中newTaskFor的默认实现
+```java
+protected <T> RunnableFuture<T> newTaskFor(Callable<T> task){
+    return new FutureTask<T>(task);
+}
+``` 
 ## 示例：使用Future实现页面渲染器
+为了使页面渲染实现更高的并发性，将渲染过程分解为2个任务，1个是渲染文本（CPU密集型），1个是下载所有的图像（I/O密集型）；
+```java
+public class FutureRender{
+    private final ExecutorService executor=...;
+    void renderPage(CharSequence source){
+        List<ImageInfo> imageInfos=scanForImageinfo(source);
+        Callable<List<ImageData>> task=new Callable<List<ImageData>>(){
+            new Callable<List<ImageData>>(){
+                public List<ImageData> call(){
+                    List<ImageData> result=new ArrayList<ImageData>();
+                    for(ImageInfo imgInfo:imageInfos){
+                        result.add(imgInfo.donwloadImage());
+                    }
+                    return result;
+                }
+            }  
+        };
+
+        Future<List<ImageData>> future=executor.submit(task);
+        renderText(source);
+        try{
+            List<ImageData> imageData=future.get();
+            for(ImageData data:imageData){
+                renderImage(data);
+            }
+        }catch(InterruptedException e){
+            //重新设置线程的中断状态
+            Thread.currentThread().interrupt();
+            //由于不需要结果，因此取消任务
+            future.cancle(true);
+        }catch(ExecutionException e){
+            throw launderThrowable(e.getCause);
+        }
+    }
+}
+```
 ## 在异构任务并行化中存在的局限
+只有当`大量相互独立`且`同构`的任务可以并发进行处理时，才能体现出将程序的`工作负载`分配到多个任务中带来的真正性能提升；
+
 ## CompletionService:Executor与BlockingQueue
+1. 如果向Executor提交了一组计算任务，并且希望在计算完成后获得结果，那么可以保留与每个任务关联的Future，然后重复调用get方法同时将timeout设置为0，从而通过轮询来判断任务是否完成；这种方法虽然可以可行，但是却很繁琐；
+2. CompletionService将`Executor`和`BlockingQueue`的功能融合在一起；你可以将Callable任务提交给它来执行，然后使用类似于队列操作的`take`和`poll`等方法来获得已完成的的结果，而这些结果会在完成时将被封装为`Future`；ExecutorCompletionService实现了CompletionService，并将计算部分委托给一个Executor；
+3. ExecutorCompletionService的实现：
+    * 在构造函数中创建一个`BlockingQueue`来保存计算完成的结果；
+    * 当计算完成时，调用`FutureTask`中的done方法；
+    * 当提交某个方法时，该任务将首先包装为一个`QueueingFuture`，这是FutureTask的一个子类，然后再改写子类的done方法，并将结果放入BlockingQueue中；
+    * `take`和`poll`方法委托给BlockingQueue，这些方法会在得到结果之前阻塞；
+```java
+private class QueueingFuture<V> extends FutureTask<v>{
+    QueueingFuture(Callable<V> c){
+        super(c);
+    }
+    QueueingFuture(Runnable t,V r){
+        super(t,r);
+    }
+    protected void done(){
+        completionQueue.add(this);
+    }
+}
+```
 ## 示例：使用CompletionService实现页面渲染器
+1. 通过CompletionService从2个方面来提高页面渲染器的性能：`缩短总运行时间`以及`提高响应性`；
+    * 减少下载所有图像的总时间：为每一幅图像的下载都创建一个独立的任务，并在线程池中执行他们，从而将串行的下载过程转换为并行的过程；
+    * 提高响应性：通过从CompletionService中获取结果以及每张照片在下载完成后立刻显示出来
+```java
+public Renderer{
+    private final ExecutorService executor;
+    Renderer(ExecutorService exeutor){
+        this.executor=executor;
+    }
+    void renderPage(CharSequence source){
+        List<ImageInfo> info=scanForImageinfo(source);
+        //多个ExecutorCompletionService共享一个Executor,CompletionService作为一组计算的句柄
+        CompletionService<ImageData> completionService=new ExecutorCompletionService<ImageData>(executor);
+        for(final ImageInfo imgInfo:info){
+            completionService.submit(new Callable<ImageData>(){
+                public void call(){
+                    return imageInfo.downloadImage();
+                }
+            });
+        }
+        renderText(source);
+        try{
+            for(int t=0;t<info.size();t<n;t++){
+                Future<ImageData> f=completionService.take();
+                ImageData imageData=f.get();
+                renderImage(imageData);
+            }
+        }catch(InterruptedException e){
+            Thread.currentThread().interrupt();
+        }catch(ExecutionException e){
+            throw launderThrowable(e.getCause);
+        }
+    }
+}
+```
+2. 通过记录提交给CompletionService的任务数量，并计算出已经获得的已完成结果的数量，即使使用一个共享的Executor，也能知道已经获得了所有任务结果的时间；
 ## 示例：旅行预订门户网站
+1. `预定时间`方法可以很容易的扩展到任意数量的任务上；
+2. 创建n个任务，将其提交到一个线程池，保留2个Future,并使用限时的get方法通过Future串行的获取每一个结果，这一切都很简单，但还有一个更简单的方法-invokeAll;
+```java
+private class QuoteTask implements Callable<TravalQuote>{
+    private final TravalCompany company;
+    private final TravalInfo travalInfo;
+    
+    public TravalQuote call()throws Exception{
+        return company.solicitQuote(travalInfo);
+    }
+}
+
+//获取不同公司的报价
+public List<TravalQuote> getRankedTravelQuotes(
+                        TravalInfo travalInfo, Set<TravalCompany> companies,Comparator<TravalQuote> ranking,long time,TimeUnit unit) throws InterruptedException{
+        List<QuoteTask> tasks=new ArrayList<QuoteTask>;
+        for(TravalCompany company:companies){
+            tasks.add(new QuoteTask(company,travalInfo));
+        }
+        List<Future<TravalQuote>> futures=exec.invokeAll(tasks,time,unit);
+        List<TravalQuote> quotes=new ArrayList<TravalQuote>(tasks.size());
+        Iterator<QuoteTask> taskIter=tasks.iterator();
+        for(Future<TravalQuote> f:futures){
+            QuoteTask task=taskIter.next();
+            try{
+                quotes.add(f.get());
+            }catch(ExecutionException e){
+                quotes.add(task.getFailQuote(e.getCause));
+            }catch(CancellationException e){
+                quotes.add(task.getTimeoutQuote(e));
+            }
+        }
+        Collections.sort(quotes,ranking);
+        return quotes;
+}
+
+```
+# 小结
+1. 通过围绕任务执行来设计应用程序，可以简化开发过程，并有助于实现并发；
+2. Executor框架将任务提交与执行策略解耦开来，同时还支持多种不同类型的执行策略；
+3. 当需要创建线程执行任务时，可以考虑使用Executor；
+4. 要想子应用程序分解为不同的任务时获得最大的好处，必须单一清晰的任务边界；
+5. 某些应用程序中存在着比较明显的任务边界，而在其他一些程序中则需要进一步分析才能揭示出粒度更细的并行性；
+
+
