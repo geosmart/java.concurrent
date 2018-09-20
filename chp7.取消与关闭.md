@@ -43,6 +43,48 @@
     * 任务在何时（When）检查是否已经请求了取消；
     * 在响应取消请求时应执行哪些（What）操作；
 ## 中断
+1. 不可靠的取消操作将把生产者置于阻塞操作中，任务将无法取消；
+2. 每个线程都有一个boolean类型的中断状态。当中断线程时，这个线程的中断状态将被设置为ture;
+```java
+public class Thread{
+    //中断目标线程
+    public void interrupt(){}
+    //返回目标线程的中断状态
+    public boolean isInterrupted(){}
+    //清除当前线程的中断状态,并返回它之前的值，这也是清除中断状态的唯一方法
+    public static boolean interrupted(){}
+}
+```
+3. 阻塞库方法，如`Thread.sleep`和`Object.wait`等，都会检查线程何时中断，并且在发现中断时提前返回，它们在响应中断时执行的操作包括：`清除中断状态`，`抛出InterruptedException`，表示阻塞操作由于中断而提前结束；
+4. 调用interrupt并不意味着立即停止目标线程正在进行的工作，而只是传递了请求中断的消息，由线程在下一个合适的时刻（取消点）中断自己；
+5. ` wait,sleep,join`等方法将严格的处理中断请求；当它们收到中断请求或者在开始执行时发现某个已被设置好的中断状态时，将抛出一个异常；
+6. 在使用静态的interuppted方法时应该小心，因为它会清除当前线程的中断状态。如果interrupted调用返回了true，那么除非你想屏蔽这个中断，否则必须对它进行处理，可以抛出interruptedException或者通过再次调用interrupted来恢复中断状态；
+7. 通常，`中断是实现取消的最合理方式`；
+```java
+class PrimeProducer extends Thread{
+    private final BlockingQueue<BigInteger> queue;
+
+    PrimeProducer(BlockingQueue<BigInteger> queue){
+        this.queue=queue;
+    }
+
+    public void run(){
+        try {
+            BigInteger p=BigInteger.one;
+            while(!Thread.currentThread().isInterrupted()){
+                queu.put(p=p.nextProbablePrime());
+            }
+        } catch (InterruptedException consumed) {
+            //允许线程退出
+        }
+    }
+
+    public void cancel(){
+        interrupt();
+    }
+}
+```
+
 ## 中断策略
 ## 响应中断
 ## 示例：计时运行
