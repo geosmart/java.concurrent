@@ -116,9 +116,65 @@ class PrimeProducer extends Thread{
     * 保存中断状态，上层调用栈中的代码能够对其进行处理；
 2. 只有实现了线程中断策略的代码才可以接收中断请求，通用目的的任务和库的代码绝不应该接收中断请求；
 ## 示例：计时运行
-
+不要尝试在外部线程中安排中断
 ## 通过Future来实现取消
+在一个专门的线程中中断任务
+```java
+public static void timeRun(final Runnable r,long timeout,TimeUnit unit) throws InterruptedException{
+    class RethrowabeTask implements Runnable{
+        private volatile Throwable t;
+        public void run(){
+            try{
+                r.run;
+            }catch(Throwable t){
+                this.t=t;
+            }
+        }
+        void rethrow(){
+            if(t!=null){
+                throw launderThrowable(t);
+            }
+        }
+    }
+    RethrowabeTask task=new RethrowabeTask();
+    final Thread taskThread=new Thread(task);
+    taskThread.start();
+    cancelExec.schedule(new Runnable(){
+       public void run(){
+           taskThread.interrupt();
+       } 
+    },timeout,unit);
+    taskThread.join(unit.toMillis(timeout));
+    task.rethrow();
+}
+```
+通过Future来取消任务
+```java
+public static void timeRun(Runnable r,long timeout,TimeUnit unit)throws interruptedException{
+    Future<?> task=taskExec.submit(r);
+    try{
+        task.get(timeout,unit);
+    }catch(TimeoutException e){
+        //下面任务会被取消
+    }catch(ExecutionException e){
+        //task中抛出的异常：重抛出
+    }finally{
+        //如果任务已经结束，是无害的
+        task.cancel(true);
+    }
+}
+```
 ## 处理不可中断的阻塞
+1. 很多可阻塞的库方法通过提前返回和抛出InterruptedException来实现对中断的响应，这使得构建可以响应取消的任务更加容易了；
+2. 但并不是所有阻塞方法或阻塞机制都响应中断；
+3. 如果一个线程是由于进行同步Socket I/O或者等待获得内部锁而阻塞的，那么中断除了能够设置线程的中断中断状态以外，什么都不能改变。
+4. 对于那些被不可中断的活动所阻塞的线程，我们可以使用与中断类似的手段，来确保可以停止这些线程。但是这需要我们更清楚的知道线程为什么会被阻塞？
+* java.io中的同步Socket I/O。在服务器应用程序中，阻塞I/O最常见的形式是读取和写入Socket。不幸的是，InputStream和OutStream的read和write方法都不响应中断，但是通过关闭底层的Socket，可以让read和write所阻塞的线程抛出一个SocketException；
+* java.nio中的同步I/O。中断一个等待InterruptibeChannel的线程，会导致抛出ClosedByInterruptedException,并关闭链路；关闭一个InterruptibleChannel导致多个阻塞在链路操作上的线程抛出AsynchronousCloseException。大多数标准channels都实现InterruptibleChannel;
+* Selector的异步I/O。如果一个线程阻塞与Selector.select方法，close方法会导致它通过抛出CloseSelectionException提前返回；
+* 获得锁。
+
+
 ## 采用newTaskFor来封装非标准的取消
 
 # 停止基于线程的服务
