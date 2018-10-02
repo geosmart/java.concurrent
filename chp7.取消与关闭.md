@@ -169,16 +169,107 @@ public static void timeRun(Runnable r,long timeout,TimeUnit unit)throws interrup
 2. 但并不是所有阻塞方法或阻塞机制都响应中断；
 3. 如果一个线程是由于进行同步Socket I/O或者等待获得内部锁而阻塞的，那么中断除了能够设置线程的中断中断状态以外，什么都不能改变。
 4. 对于那些被不可中断的活动所阻塞的线程，我们可以使用与中断类似的手段，来确保可以停止这些线程。但是这需要我们更清楚的知道线程为什么会被阻塞？
-* java.io中的同步Socket I/O。在服务器应用程序中，阻塞I/O最常见的形式是读取和写入Socket。不幸的是，InputStream和OutStream的read和write方法都不响应中断，但是通过关闭底层的Socket，可以让read和write所阻塞的线程抛出一个SocketException；
-* java.nio中的同步I/O。中断一个等待InterruptibeChannel的线程，会导致抛出ClosedByInterruptedException,并关闭链路；关闭一个InterruptibleChannel导致多个阻塞在链路操作上的线程抛出AsynchronousCloseException。大多数标准channels都实现InterruptibleChannel;
-* Selector的异步I/O。如果一个线程阻塞与Selector.select方法，close方法会导致它通过抛出CloseSelectionException提前返回；
-* 获得锁。
-
-
+* `java.io中的同步Socket I/O`。在服务器应用程序中，阻塞I/O最常见的形式是读取和写入Socket。不幸的是，InputStream和OutStream的read和write方法都不响应中断，但是通过关闭底层的Socket，可以让read和write所阻塞的线程抛出一个SocketException；
+* `java.nio中的同步I/O`。中断一个等待InterruptibeChannel的线程，会导致抛出ClosedByInterruptedException,并关闭链路；关闭一个InterruptibleChannel导致多个阻塞在链路操作上的线程抛出AsynchronousCloseExcepticount>0on。大多数标准channels都实现InterruptibleChannel;
+* `Selector的异步I/O`。如果一个线程阻塞与Selector.select方法，close方法会导致它通过抛出CloseSelectionException提前返回；
+* 获得锁。如果一个线程在等待内部锁，那么如果不能确保它最终获得锁，并且作出足够多的努力，让你能够以其他方式获得它的注意，你是不能停止它的。然而，`显式Lock类提供了lockInterruptibly方法`，允许你等待一个锁，并仍然能够响应中断；
 ## 采用newTaskFor来封装非标准的取消
+```java
+public class ReaderThread extends Thread{
+    private final Socket socket;
+    private final InputStream in;
+    public ReaderThread(Socket socket) throws IOException{
+        this.socket=socket;
+        this.in=socket.getInputStream();
+    }
+    public void interrupt(){
+        try{
+            socket.close();
+        }catch(IOException ignored){
+            
+        }finally{
+            //支持标准的中断
+            super.interrupt();
+        }
+    }
 
+    public void run(){
+        try{
+            bytep[ buf=new bytep[BUFSZ];
+            while(true){
+                int count=in.read(buf);
+                if(count <0){
+                    break;
+                }
+                else if(count>0){
+                    processBuffer(buf,count);
+                }
+            }
+            catch(IOException e){
+                //允许线程退出
+            }
+        }
+    }
+}
+```
 # 停止基于线程的服务
+1. 没有退出线程管用的优先方法，它们需要自行结束；
+2. 像其他对象一样，线程可以被自由的共享，但是认为线程有一个对应的共享者是有道理的，这个拥有者就是创建线程的类。所以线程池拥有的工作者线程，如果需要中断这些线程，那么应该由线程池来执行；
+3. 正如其他封装的对象一样，线程的所有权是不可传递的：
+    * 应用程序可能拥有服务，服务可能拥有工作者线程；
+    * 但是应用程序并不拥有工作者线程，因此应用程序不应该试图直接停止工作者线程；
+    * 相反，服务应该提供生命周期方法（lifecycle methods）来关闭它自己，并关闭它所拥有的线程；
+    *  ExecutorService提供了shutdown和shutdownNow方法，其他线程持有的服务也应该都提供类似的关闭服务；
+
+4. 用newTaskFor封装任务中非标准取消
+```java
+public interface CancellableTask<T> extends Callable<T>{
+    void Taskcancell();
+    RunnableFuture<T> newTask();
+}
+@ThreadSafe
+public class CancellingExecutor extends ThreadPoolExecutor{
+    protected<T> RunnableFuture<T> newTaskFor(Callable<T> callable){
+        if(callable instanceof CancellableTask){
+            return ((CancellableTask<T>)callable).newTask();
+        }else{
+            return super.newTaskFor(callable);   
+        }
+    }
+}
+
+public abstract class SocketUsingTask<T> implements CancellableTask<T>{
+    @GuardBy("this")
+    private Socket socket;
+
+    protected asynchronized void setSocket(Socket s){
+        socket=s;
+    }
+
+    public sychronized void cancel(){
+        try{
+            if(socket!=null){
+                socket.close();
+            }
+        }catch(IOException ignored){}
+    }
+
+    public RunnableFuture<T> newTask(){
+        return new Futuretask<T>(this){
+            public boolean cancell(boolean myInterruptIfRunning){
+                try{
+                    SocketUsingTask.this.cancel();
+                }finally{
+                    return super.cancel(myInterruptIfRunning);
+                }
+            }
+        };
+    }
+
+}
+```
 ## 示例：日志服务
+
 ## 关闭ExecutorService
 ## `毒丸`对象
 ## 示例：只执行一次的服务
