@@ -269,13 +269,86 @@ public abstract class SocketUsingTask<T> implements CancellableTask<T>{
 }
 ```
 ## 示例：日志服务
+向LogWriter添加可靠的取消
+```java
+public class LogService{
+    private final BlockingQueue<Stirng> queue;
+    private final LoggerThread loggerThread;
+    private final PrintWriter writer;
+    @GuardBy("this")
+    private boolean isShutdown;
+    @GuardBy("this")
+    private int reservations;
+    
+    public void start(){
+        loggerThread.start();
+    }
+    
+    public stop(){
+        synchronized(this){
+            iShutdown=true;
+        }
+        loggerThread.interrupt();
+    }
+    
+    public void log(String msg)throw InterruptedException{
+        //创建新日志活动的各个子任务必须是原子的
+        synchronized(this){
+            if(isShutdown){
+                throw new IllegalStateException("...");
+            }
+            ++reservations;
+        }
+        queue.put(msg);
+    }
 
+    public class LoggerThread extends Thread{
+        public void run(){
+            try{
+                while(true){
+                    try{
+                        //原子化检查关闭
+                        synchronized(LogService.this){
+                            if(isShutdown &&reservations==0){
+                                break;
+                            }
+                        }
+                        String msg=queue.take();
+                        synchronized(LogService.this){
+                            --reservations;
+                        }
+                        writer.printlin(msg);
+                    }catch(InterruptedException e){
+                        //重试
+                    }
+                }
+            }finally{
+                writer.close();
+            }
+        }
+    }
+}
+```
 ## 关闭ExecutorService
+ExecutorService提供了关闭的两种方法：
+1. 使用shutdown优雅的关闭，
+2. 使用shutdownNow强行的关闭：首先尝试关闭当前正在执行的任务，然后返回待完成任务的清单；
+
+两种不同的终结选择在`安全性`和`响应性`之间进行了权衡：强行终结的速度更快，但是风险大，因为任务可能在执行到一半的时候被终结，而正常终结虽然速断慢，却安全，因为知道队列中的所有任务完成前，ExecutorService都不会关闭。
+
 ## `毒丸`对象
+1. 另一种保证生产者和消费者服务关闭的方式是使用毒丸对象(`poision pill`):一个可识别的对象，置于队列中，意味着`当你得到它时，停止一切工作`。
+2. 在FIFO队列中毒丸对象保证了消费者完成队列中关闭之前的所有工作，因为所有早于致命毒丸提交的工作都会在处理它之前就完成了；
+3. 生产者不应该在提交了毒丸后，再提交任何工作；
+4. 毒丸只有在生产者和消费者数量已知的情况下使用。
+5. 毒丸只有在无限队列中工作时，才是可靠的；
+
 ## 示例：只执行一次的服务
+
 ## shutdownNow的局限性
 
 # 处理非正常的线程终止
+
 # JVM关闭
 ## 关闭钩子
 ## 守护线程
