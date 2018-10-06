@@ -346,7 +346,35 @@ ExecutorService提供了关闭的两种方法：
 ## 示例：只执行一次的服务
 
 ## shutdownNow的局限性
-
+shutdownNow时没有常规方法获取已经提交但没有开始的任务的清单；
+在关闭过程中判定哪些任务还在进行的技术；
+```java
+public class TrackingExecutor extends AbstractExecutorService{
+    private final ExecutorService exec;
+    private final Set<Runnable> taskCancelledAtShutdown=Collections.synchronizedset(new HashSet<Runnable>());
+    ...
+    public List<Runnable> getCancelledTasks(){
+        if(!exec.isTerminated()){
+            throw new IllegalStateException(...);
+        }
+        return new ArrayList<Runable>(taskCancelledAtShutdown); 
+    }
+    public void execute(final Runable runnable){
+        exec.execute(new Runnable(){
+            public void run(){
+                try{
+                    runnable.run();
+                }finally{
+                    if(isShutdown()&& thread.currentThread().isInterrupted()){
+                        taskCancelledAtShutdown.add(runnable);
+                    }
+                }
+            }
+        })
+    }
+}
+//奖ExecutorService中的其他方法委托到exec；
+```
 # 处理非正常的线程终止
 
 # JVM关闭
