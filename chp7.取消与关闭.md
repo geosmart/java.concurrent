@@ -376,10 +376,55 @@ public class TrackingExecutor extends AbstractExecutorService{
 //奖ExecutorService中的其他方法委托到exec；
 ```
 # 处理非正常的线程终止
+1. 线程的RunTimeException会导致线程终止;
+2. 任何代码都可能抛出一个RuntimeException。每当调用一个方时，都要对它的行为保持怀疑，不要盲目的任务它一定为正常返回。或者一定会抛出在方法原型中声明的某个已检查的异常；
+
+示例：如何在线程池内部构建一个工作者线程，如果任务抛出了一个未检查异常，那么它使线程终结，但会首先通知框架线程已经终结，然后框架可能会用新的线程来代替这个工作线程；
+```java
+public void run(){
+    Throwable thrown=null;
+    try{
+        while(!isInterrupted){
+            runTask(getTaskFromWorkQueue);
+        }catch(Throwable e){
+            thrown =e;
+        }finally{
+            threadExited(this,thrown);
+        }
+    }
+}
+```
+ThreadPoolExecutor和Swing都用这项技术来确保行为糟糕的任务不会影响后续任务的执行；
 
 # JVM关闭
+1. JVM正常关闭
+    * 当最后一个正常（非守护）线程结束时；
+    * 当调用了System.Exit时；
+    * 基于特定平台的方法关闭时（如发送了SIGINT信号或键入CTRL+C）
+2. JVM非正常关闭
+    * 调用Runtime.halt；
+    * 在操作系统中kill JVM进程（如发送SIGKILL）来强行关闭JVM;
 ## 关闭钩子
+1. 在正常关闭中，JVM首先调用所有已注册的关闭钩子（Shutdown Hook）;
+2. 当强行关闭时，只是关闭JVM，而不运行关闭钩子；
+3. 关闭钩子是指通过Runtime.addShutdiwnHook注册的但未开始的线程；
+4. 关闭钩子应该是线程安全的，且应该尽快退出；
+5. 关闭钩子可以用于实现服务或应用程序的清理工作，例如删除临时文件，或者清除无法由操作系统自动清除的资源；
+
+>通过注册一个关闭钩子来停止日志服务
+```java
+public void start(){
+    Runtime.getRuntime().addShutdownHook(new Thread(){
+        public void run(){
+            try{
+                LogService.this.stop();
+            }catch(InterruptedException ignored){}
+        }
+    });
+}
+```
 ## 守护线程
+
 ## 终结器
 
 # 小结
