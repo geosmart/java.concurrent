@@ -2,31 +2,7 @@
 ---
 >Java平台类库包含了丰富的`并发基础构建模块`，例如线程安全的`容器类`以及各种用于协调多个`相互协作的线程控制流`的`同步工具类`（Synchronizer）。
 本章介绍一些最有用的并发构建模块；
-<!-- TOC -->
-
-- [同步容器类](#同步容器类)
-    - [同步容器类的问题](#同步容器类的问题)
-    - [迭代器与ConcurrentModificationException](#迭代器与concurrentmodificationexception)
-    - [隐蔽迭代器](#隐蔽迭代器)
-- [并发容器](#并发容器)
-    - [ConcurrentHashMap](#concurrenthashmap)
-    - [额外的原子Map操作](#额外的原子map操作)
-    - [CopyOnWriteArrayList](#copyonwritearraylist)
-- [阻塞队列和生产者-消费者模式(Producer-Consumer)](#阻塞队列和生产者-消费者模式producer-consumer)
-    - [示例：桌面搜索](#示例桌面搜索)
-    - [串行线程封闭](#串行线程封闭)
-    - [双端队列(Deque)与工作密取(Work Stealing)](#双端队列deque与工作密取work-stealing)
-- [阻塞方法与中断方法](#阻塞方法与中断方法)
-    - [阻塞方法](#阻塞方法)
-    - [中断方法](#中断方法)
-- [同步工具类](#同步工具类)
-    - [闭锁（Latch）](#闭锁latch)
-    - [FutureTask](#futuretask)
-    - [信号量(Semaphore)](#信号量semaphore)
-    - [栅栏(Barrier)](#栅栏barrier)
-- [构建高效且可伸缩的结果缓存](#构建高效且可伸缩的结果缓存)
-
-<!-- /TOC -->
+[TOC]
 # 同步容器类
 1. 同步容器类包括Vector和Hashtable,好包括在JDK中提供的Collection.synchronizedXxx等工厂方法创建的；
 2. 这些类实现线程安全的方法是：将他们的状态封装起来，并且对每个共有方法都进行同步，使得每次都只有一个线程能访问容器的状态；
