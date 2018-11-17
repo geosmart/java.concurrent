@@ -79,6 +79,14 @@ public class ThreadDeadLock{
 10. CPU周期并不是唯一影响线程池大小的资源，还包括内`存、文件句柄、套接字句柄和数据库连接`等。计算这些资源对线程池的约束条件是更容易的：`线程池大小的上限=该资源的可用总量/每个任务的需求量`
 
 # 配置ThreadPoolExecutor
+1. ThreadPoolExecutor为一些Executor提供了基本的实现，这些Executor是由Executors中的newCachedThreadPool、newFixedThreadPool和newScheduledThreadExecutor等工厂方法返回的；
+2. ThreadPoolExecutor是一个灵活的、稳定的线程池，允许进行各种定制；
+3. 如果默认的执行策略不能满足需求，那么可以通过ThreadPoolExecutor的构造函数来实例化一个对象，并根据自己的需求来定制，并且可以`参考Executors的源码`来了解默认配置的执行策略，然后再以执行执行策略为基础进行修改；
+```java
+public ThreadPoolExecutor(int corePoolSize,int maxmimumPoolSize,long keepAliveTime,TimeUnit unit,BlockingQueue<Runnable> workQueue,ThreadFactory threadFactory,RejectedExecutionHandler handler){
+    ...
+}
+```
 ## 线程的创建和销毁
 ## 管理队列任务
 ## 饱和策略
