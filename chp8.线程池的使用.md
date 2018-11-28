@@ -88,6 +88,12 @@ public ThreadPoolExecutor(int corePoolSize,int maxmimumPoolSize,long keepAliveTi
 }
 ```
 ## 线程的创建和销毁
+1. 线程池的基本大小（`Core Pool Size`）、最大大小（`Maximum Pool Size`）以及存活时间（`Idle Time`）等因素共同负责线程的创建和销毁；
+2. 通过调节线程池的基本大小和存活时间，可以帮助线程池`回收空闲线程占有的资源`，从而使得这些资源可以用于执行其他工作。（显然这是一种折衷：回收空闲线程会产生额外的`延迟`，因为当需求增加时，必须创建新的线程来满足需求）；
+3. newFiexedThreadPool工厂方法将线程池的基本大小和最大大小设置为参数中指定的值，而且创建的线程池不会超时；
+4. newCachedThreadPool工厂方法将线程池的最大大小设置为Integer.Max_VALUE，而将基本大小设置为0，并将超时设置为60S，这种方法创建出来的线程池可以被无限扩展，并且当需求降低时会自动收缩；
+5. 其他形式的线程池可以通过显式的ThreadPoolExecutor构造函数来构造；
+
 ## 管理队列任务
 ## 饱和策略
 ## 线程工厂
