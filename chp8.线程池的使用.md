@@ -11,6 +11,7 @@
 - [配置ThreadPoolExecutor](#配置threadpoolexecutor)
     - [线程的创建和销毁](#线程的创建和销毁)
     - [管理队列任务](#管理队列任务)
+        - [SynchronousQueue（工作移交）](#synchronousqueue工作移交)
     - [饱和策略](#饱和策略)
     - [线程工厂](#线程工厂)
     - [在调用构造函数后再定制ThreadPoolExecutor](#在调用构造函数后再定制threadpoolexecutor)
@@ -95,7 +96,29 @@ public ThreadPoolExecutor(int corePoolSize,int maxmimumPoolSize,long keepAliveTi
 5. 其他形式的线程池可以通过显式的ThreadPoolExecutor构造函数来构造；
 
 ## 管理队列任务
+在有限的线程池中会限制可并发执行的任务数量。
+ThreadPoolExecutor允许提供一个BlockingQueue来保存等待执行的任务。基本的任务排队方法有3种：无界队列、有界队列和同步移交（Synchronous Handoff）。队列的旋转与其他配置参数有关，例如线程池的大小等；
+1. newFixedThreadPool和newSignleThreadPool在默认情况下将使用一个无界的LinkedBlockingQueue；
+2. 一种更稳妥的资源管理策略是使用有界队列，如ArrayBlockingQueue、有界的LinkedBlockingQueue、PriorityBlockingQueue；
+3. 当使用像LinkedBlockingQueue或ArrayBlockingQueue这样的FIFO队列时，任务的执行顺序与它们的到达顺序相同；
+4. 如果想进一步控制任务的执行顺序，还可以使用PriorityBlockingQueue，这个队列将根据优先级来安排任务，任务的优先级是通过自然顺序或Comparator来定义的；
+
+有界队列避免资源耗尽情况发生，但是它又带来了新的问题，当队列填满后，新的任务改怎么办？有许多饱和策略(Saturation Policy)；
+在使用有界队列时，队列的大小和线程池的大小必须一起调节，如果线程池较小而队列较大，那么有助于减少内存使用量，降低CPU的利用率，同时可以减少上下文切换，但付出的代价的是可能会限制吞吐量；
+只有当任务相互独立时，为线程池或工作队列设置界限才是合理的。如果任务之间存在依赖性，那么有界的线程池或队列就可能出现`饥饿`死锁问题。此时应该使用无界的线程池，例如newCachedThreadPool;
+
+### SynchronousQueue（工作移交）
+1. 对于非常大的或者无界的线程池，可以通过使用SynchronousQueue来避免任务排队。以及直接将任务从生产者移交给工作者线程；
+2. SynchronousQueue不是一个真正的队列，而是一种在线程之间进行移交的机制。要将一个元素放入SynchronousQueue中，必须有另一个线程正在等待接收这个元素，如果没有线程正在等待，并且线程池的当前大小小于最大值，那么ThreadPoolExecutor将创建一个新的线程，否则根据饱和策略，这个任务将被拒绝；
+3. 使用直接移交将更高效，因为任务会直接移交给执行它的线程，而不是被首先放在队列中，然后由工作者线程从队列中提取该任务。
+4. 只有当线程池是无界的或者可以拒绝任务时，SynchronousQueue才有实际价值;
+5. 在newCachedThreadPool工厂方法中就使用了SynchronousQueue;
+
+>对于Executor，newCachedThreadPool工厂方法是一个很好的默认选择，它能提供比固定大小的线程池更好的队列性能，
+>当需要限制当前任务的数量以满足资源管理需要时，那么可以选择固定大小的线程池，就像在接收网络客户请求的服务器应用程序中，如果不进行限制，那么很容易出现过载问题；
+
 ## 饱和策略
+
 ## 线程工厂
 ## 在调用构造函数后再定制ThreadPoolExecutor
 
