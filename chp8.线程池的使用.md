@@ -118,7 +118,48 @@ ThreadPoolExecutor允许提供一个BlockingQueue来保存等待执行的任务�
 >当需要限制当前任务的数量以满足资源管理需要时，那么可以选择固定大小的线程池，就像在接收网络客户请求的服务器应用程序中，如果不进行限制，那么很容易出现过载问题；
 
 ## 饱和策略
+1. 当队列被填满后，饱和策略开始发挥作用。ThreadPoolExecutor的饱和策略可以通过调用setRejectedExecutionHandler来修改；
+2. JDK提供了胡值班费有人的RejectedExecutionHandler来实现，每种实现都包含有不同的策略：AbortPolicy、CallerRunsPolicy、Discardpolicy和DiscardOldestPolicy；
+3. 中止策略(`AbortPolicy`)是默认的饱和策略，该策略将抛出RejectedExecutionException；
+4. 当心提交的任务无法保存到队列中等待执行时，抛弃策略(`DiscardPolicy`)会悄悄抛弃该任务；
+5. 抛弃最旧的策略(`DiscardOldestPolicy`)会抛弃下一个将被执行的任务，然后尝试重新提交新的任务。如果工作队列是一个PriorityQueue，那么DiscardOldestPolicy将抛弃优先级最高的任务，因此最好不要将DiscardOldestPolicy饱和策略和PriorityQueue放在一起；
+6. 调用者运行策略(`CallerRunsPolicy`)实现了一种调节机制，该策略既不会抛弃任务，也不会抛弃异常，而是将某些任务回退到使用者，从而降低新任务的流量；它不会再线程池的某个线程中执行新提交的任务，而是在一个掉了execute线程中执行该任务。
+7. 当创建Executor时，可以选择饱和策略或者对执行策略进行修改；
+```java
+ThreadPoolExecutor executor=new ThreadPoolExecutor(N_THREADS,N_THREADS,0L,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<Runnable>(CAPACITY));
+executor.setRejectedExecutorHandler(new ThreadPoolExecutor.CallerRunsPolicy());     
+```
+8. 当工作队列被填满后，没有预定义的饱和策略来阻塞execute。然而，通过使用Semaphore（信号量）来限制任务的到达率；就可以实现这个功能。
+```java
+@ThreadSafe
+public class BoundedExecutor{
+    private final Executor exec;
+    provate final Semaphore semaphore;
 
+    public BoundedExecutor(Executor exec,int bound){
+        this.exec=exec;
+        this.semaphore=new Semaphore(bound);
+    }
+
+    public void submitTask(final Runnable command){
+        semaphore.acquire();
+        try {
+            exec.execute(new Runnable(){
+              public void run(){
+                try {
+                    command.run();
+                } finnallu {
+                    semaphore.release();
+                }
+              }
+            });
+        } catch (RejectedExecutionException e) {
+            semaphore.release();
+        }
+    }
+}
+
+```
 ## 线程工厂
 ## 在调用构造函数后再定制ThreadPoolExecutor
 
