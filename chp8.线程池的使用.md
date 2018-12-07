@@ -161,6 +161,71 @@ public class BoundedExecutor{
 
 ```
 ## 线程工厂
+```java
+public interface ThraedFactory{
+    Thread newThread(Runnable r);
+}
+```
+1. 自定义线程工厂
+自定义线程工厂，实现在线程转储和错误日志信息中区分来自不同线程池的线程
+```java
+public class MyThreadFactory implements ThreadFactory{
+    private final String poolName;
+    public MyThreadFactory(String poolName){
+        this.poolName=poolName;
+    }
+    public Thread newThread(Runnable runnable){
+        return new MyAppThread(runnable,poolName);
+    }
+}
+```
+在MyThreadApp中定制行为：指定线程名字，设置自定义UncaughtExceptionHandler向Logger中写入信息，维护一些统计信息（包括多少个线程被创建和销毁），以及在线程被创建或者终止时把调试消息写入日志；
+```java
+public class MyAppThread extends Thread{
+    public static final String DEFAULT_NAME="myAppTherad";
+    private static volatile boolean debugLifecycle=false;
+    private static final AtomicInteger created=new AtomicInteger();
+    private static final AtomicInteger alive=new AtomicInteger();
+    private static final Logger log =Logger.getAnonymousLogger();
+
+    public MyAppthread(Runnable r){
+        this(r,DEFAULT_NAME);
+    }
+
+    public MyAppThread(Runnable runnable,String name){
+        super(runnable,name+"-"+created.incrementAndGet());
+        setUncaughtExceptionHandler({
+            new Thread.UncaughtExceptionHandler(){
+                public void uncaughtException(Thrad t,Throwable e){
+                    log.log(Level.SEVERE,"UNCAUGHT in thread"+t.getName(),e);
+                }
+            }
+        });
+    }
+
+    public void run(){
+        //复制debug标志以保证唯一性
+        boolean debug=debugLifecycle;
+        if(debug){
+            log.log(Level.FINE,"Created "+getName());
+        }
+        try{
+            alive.incrementAndGet();
+            super.run();
+        }finally{
+            alive.decrementAndGet();
+            if(debug){
+                log.log(Level.FINE+"Exiting "+getName());
+            }
+        }
+    }
+    public static int getThreadsCreated(){return created.get()};
+    public static int getThreadAlive(){return alive.get();}
+    public boolean getDebug(){return debugLifecycle;}
+    public static void setDebug(boolean b){debugLifecycle=b};
+}
+```
+
 ## 在调用构造函数后再定制ThreadPoolExecutor
 
 # 扩展ThreadPoolExecutor
