@@ -227,8 +227,15 @@ public class MyAppThread extends Thread{
 ```
 
 ## 在调用构造函数后再定制ThreadPoolExecutor
+1. 在调用万ThreadPoolExecutor的构造函数后，仍然可以通过setter方法来修改大多数传递给它的构造函数的参数：线程池的基本大小、最大大小、存活时间、线程工厂、拒绝执行器；
+2. 如果Executor是通过Executors中的某个（newSingleThreadPoolExecutor除外）工厂方法创建的，那么可以将结果的类型转换为ThreadPoolExecutor以访问setter方法；
+3. 在Executors中包含一个FinalizableDelegatedExecutorService工厂方法，该方法对一个现有的ExecutorService进行包装，使其只报了出ExecutorService的方法，因此不能对它进行配置；newSingleThreadPoolExecutor返回按这种方法封装的ExecutorService，而不是最初的ThreadPoolExecutor；
+4. 如果将ExecutorService暴露给不信任的代码，又不希望对其进行修改，就可以通过FinalizableDelegatedExecutorService来包装它；
 
 # 扩展ThreadPoolExecutor
+1. ThreadPoolExecutor是可扩展的，它提供了几个可以在子类中改写的方法：`beforeExecute`、`afterExecute`和`terminated`，这些方法可以用于扩展ThreadPoolExecutor的行为；
+2. 在执行任务的线程中将调用`beforeExecute`和`afterExecute`等方法，在这些方法中还可以添加日志、计时、监视或统计信息收集的功能；
+3. 在线程完成关闭操作时调用`terminated`，也就是在所有任务都已经完成并且所有工作者线程也已经关闭后。terminated可以用来释放Executor在其生命周期里分片的各种资源，此外还可以执行发生通知、记录日志或者手机finalize统计等信息；
 
 # 递归算法的并行化
 
