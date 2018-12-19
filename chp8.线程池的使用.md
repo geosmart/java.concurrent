@@ -238,5 +238,59 @@ public class MyAppThread extends Thread{
 3. 在线程完成关闭操作时调用`terminated`，也就是在所有任务都已经完成并且所有工作者线程也已经关闭后。terminated可以用来释放Executor在其生命周期里分片的各种资源，此外还可以执行发生通知、记录日志或者手机finalize统计等信息；
 
 # 递归算法的并行化
+如果循环中的迭代操作都是独立的，并且不需要等待所有迭代操作都完成都继续执行，那么就可以使用Executor将`串行循环`转化为`并行循环`；
+```java
+void processSequntially(List<Element> elements){
+    for(Element e:elements){
+        process(e);
+    }
+}
 
+void processInParallel(Executor exec,List<Element> elements){
+    for(final Element e:elements){
+        exec.execute(new Runnable(){
+            public void run(){
+                process(e);
+            }
+        });
+    }
+}
+```
+1. 当串行循环中的各个迭代操作之间彼此独立，并且每个迭代操作执行的工作量比管理一个新任务时带来的开销更多，那么这个串行循环就适合并行化；
+2. 在一些递归设计中同样可以采用循环并行化的方法进行优化；
+```java
+public<T> void sequentialRecursive(List<Node> nodes,Collection<T> results){
+    for(Node<T> n:nodes){
+        results.add(n.compute());
+        sequentialRecursive(n.getChildren(),results);
+    }
+}
+
+public<T> void parrallelRecursive(final Executor exec,List<Node<T>> nodes,final Collection<T> results){
+    //遍历过程串行
+    for(final Node<T> n:nodes){
+        exec.execute(new Runnable(){
+            public void run(){
+                //compute并行计算
+                results.add(n.compute());
+            }
+        });
+        parrallelRecursive(exec,n.getChildren(),results);
+    }
+}
+```
+3. 等待通过并行方式计算的结果
+```java
+public<T> Collection<T> getParrallelResults(List<Node<T>> nodes) throws InterruptedException{
+    ExecutorService exec=Executors.newCachedThreadPool();
+    Queue<T> resultQueue=new ConcurrentLinkedQueue<T>();
+    parrallelRecursive(exec,nodes,resultQueue);
+    exec.shutdown();
+    exec.awaitTermination(Long.Max_VALUE,TimeUnit.SECONDS);
+    return resultQueue;
+}
+```
 # 小结
+1. 对于并发执行的任务，Executor框架是一种强大且灵活的框架；
+2. 它提供了大量可调节的选项，如创建线程和关闭线程的策略，处理队列任务的策略，处理过多任务的策略，并且提供了几个钩子方法来扩展它的行为；
+3. 然而与大多数功能强大的框架一样，其中某些设置参数并不能很好的工作，某些类型的任务需要特定的执行策略，而一些参数组合则可能产生奇怪的结果；
