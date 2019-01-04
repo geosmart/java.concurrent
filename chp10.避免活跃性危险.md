@@ -34,6 +34,34 @@
 8. JVM在解决死锁问题是没有数据库服务那么强大。当一组Java线程发生死锁时，这些线程永远就不能再使用了，唯一的恢复方式就是中止或重启它；
 9. 当死锁出现时，往往是最糟糕的时候-在高负载情况下；
 ## 锁顺序死锁
+1. A和B两个线程交错执行将会发生死锁
+```java
+//A：--锁住left-->尝试锁住right-->永久等待
+//B：----锁住right-->锁住left-->永久等待
+public class LeftRightDeadlock{
+    private final Object left=new Object();
+    private final Object right=new Object();
+
+    private void leftRight(){
+        synchronized(left){
+            synchronized(right){
+                doSth();
+            }
+        }
+    }
+
+    private void rightLeft(){
+        synchronized(right){
+            synchronized(left){
+                doSth();
+            }
+        }
+    }
+}
+```
+死锁原因：两个线程试图以`不同的顺序`来获得相同的锁。如果按照相同的顺序来请求锁，那么就不会出现`循环的加锁依赖性`，因此也就不会出现死锁；
+2. 如果所有线程都以固定的顺序来获得锁，那么在程序中就不会出现`顺序死锁`问题。
+
 ## 动态的锁顺序死锁
 ## 在协作对象之间发生的死锁
 ## 开放调用
