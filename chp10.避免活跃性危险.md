@@ -10,6 +10,8 @@
 - [死锁](#死锁)
     - [锁顺序死锁](#锁顺序死锁)
     - [动态的锁顺序死锁](#动态的锁顺序死锁)
+        - [在transferMoney中如何发生死锁？](#在transfermoney中如何发生死锁)
+        - [在典型条件下会发生死锁的循环](#在典型条件下会发生死锁的循环)
     - [在协作对象之间发生的死锁](#在协作对象之间发生的死锁)
     - [开放调用](#开放调用)
     - [资源死锁](#资源死锁)
@@ -63,6 +65,186 @@ public class LeftRightDeadlock{
 2. 如果所有线程都以固定的顺序来获得锁，那么在程序中就不会出现`顺序死锁`问题。
 
 ## 动态的锁顺序死锁
+```java
+public void transferMoney(Account fromAccount,Account toAccount,DollarAmount amount) throws InsufficientFundsException{
+    synchronized(fromAccount){
+        synchronized(toAccount){
+            if(fromAccount.getBalance().compareTo(account)<0){
+                throws new InsufficientFundsException();
+            }else{
+                //扣款
+                fromAccount.debit(amount);
+                //打款
+                toAccount.credit(amount);
+            }
+        }
+    }
+}
+```
+### 在transferMoney中如何发生死锁？
+>A：transferMoney(myAccount,yourAccount,10)
+>B：transferMoney(yourAccount,myAccount,20)
+1. 如果执行顺序不当，那么A可能获得myAccount的锁并等待yourAccount的锁；然而B此时持有yourAccount的锁，并正在等待myAccount的锁；
+2. 如果存在嵌套的锁获取操作，由于我们无法控制参数的顺序，因此要解决这个问题，必须定义锁的顺序，并且在整个应用程序中都按照这个顺序来获取锁；
+3. 在制定锁的顺序时，可以使用System.identityHashCode方法，该方法将返回由Object.hashCode返回的值；
+```java
+  private static final Object tieLock=new Object();
+  public static void transferMoney(final Account fromAccount, final Account toAccount, final DollarAmount amount) throws InsufficientFundsException {
+        class Helper {
+            public void transfer() throws InsufficientFundsException {
+                if (fromAccount.getBalance().compareTo(toAccount.getBalance()) < 0) {
+                    throw new InsufficientFundsException();
+                } else {
+                    //扣款
+                    fromAccount.debit(amount);
+                    //打款
+                    toAccount.credit(amount);
+                    System.out.println(String.format("Account_%s debit:%s, balance:%s", fromAccount.getAcctNo(), amount.getAmount(), fromAccount.getBalance().getAmount()));
+                    System.out.println(String.format("Account_%s credit:%s, balance:%s", toAccount.getAcctNo(), amount.getAmount(), toAccount.getBalance().getAmount()));
+                }
+            }
+        }
+
+        int fromHash = System.identityHashCode(fromAccount);
+        int toHash = System.identityHashCode(toAccount);
+        if (fromHash < toHash) {
+            synchronized (fromAccount) {
+                synchronized (toAccount) {
+                    new Helper().transfer();
+                }
+            }
+        } else if (fromHash > toHash) {
+            synchronized (toAccount) {
+                synchronized (fromAccount) {
+                    new Helper().transfer();
+                }
+            }
+        } else {
+            //在极少数情况下，两个对象可能拥有相同的hashCode，此时必须通过任意的方法来决定锁的顺序，而这可能又会重新引入死锁。为了解决这种情况，可以使用`加时赛`（Tie-Breaking）锁；
+            synchronized (tieLock) {
+                synchronized (fromAccount) {
+                    synchronized (toAccount) {
+                        new Helper().transfer();
+                    }
+                }
+            }
+        }
+    }
+```
+### 在典型条件下会发生死锁的循环
+DemostrateDeadlock在大多数系统下都会很快发生死锁
+```java
+package me.demo.java.concurrent.deadlock;
+
+import java.util.Random;
+
+public class TransferMoneyNoOrder {
+    private static final int NUM_THREADS = 20;
+    private static final int NUM_ACCOUNTS = 5;
+    private static final int NUM_ITERATIONS = 1000000;
+
+    public static void main(String[] args) throws InterruptedException {
+        final Random rnd = new Random();
+        final Account[] accounts = new Account[NUM_ACCOUNTS];
+
+        for (int i = 0; i < accounts.length; i++) {
+            accounts[i] = new Account(i, new DollarAmount(10000));
+        }
+
+        class TransferThread extends Thread {
+
+            @Override
+            public void run() {
+                for (int i = 0; i < NUM_ITERATIONS; i++) {
+                    int fromAccount = rnd.nextInt(NUM_ACCOUNTS);
+                    int toAccount = rnd.nextInt(NUM_ACCOUNTS);
+                    DollarAmount amount = new DollarAmount(rnd.nextInt(1000));
+                    try {
+                        transferMoney(accounts[fromAccount], accounts[toAccount], amount);
+                    } catch (InsufficientFundsException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+
+        for (int i = 0; i < NUM_THREADS; i++) {
+            new TransferThread().start();
+        }
+        Thread.currentThread().join();
+    }
+
+    interface Amount {
+    }
+
+    static class DollarAmount implements Amount, Comparable {
+        long amount;
+
+        public DollarAmount(int amt) {
+            amount = amt;
+        }
+
+        long getAmount() {
+            return amount;
+        }
+
+        public void setAmount(long amount) {
+            this.amount = amount;
+        }
+
+        public int compareTo(Object o) {
+            return this.getAmount() > ((DollarAmount) o).getAmount() ? 1 : 0;
+        }
+    }
+
+    static class InsufficientFundsException extends Exception {
+    }
+
+    static class Account {
+        int accountId;
+        DollarAmount balance;
+
+        public Account(int accountId, DollarAmount balance) {
+            this.accountId = accountId;
+            this.balance = balance;
+        }
+
+        void debit(DollarAmount d) {
+            balance.setAmount(balance.getAmount() - d.getAmount());
+        }
+
+        void credit(DollarAmount d) {
+            balance.setAmount(balance.getAmount() + d.getAmount());
+        }
+
+        DollarAmount getBalance() {
+            return balance;
+        }
+
+        int getAcctNo() {
+            return accountId;
+        }
+    }
+
+    public static void transferMoney(Account fromAccount, Account toAccount, DollarAmount amount) throws InsufficientFundsException {
+        synchronized (fromAccount) {
+            synchronized (toAccount) {
+                if (fromAccount.getBalance().compareTo(toAccount.getBalance()) < 0) {
+                    throw new InsufficientFundsException();
+                } else {
+                    //扣款
+                    fromAccount.debit(amount);
+                    //打款
+                    toAccount.credit(amount);
+                    System.out.println(String.format("Account_%s debit:%s, balance:%s", fromAccount.getAcctNo(), amount.getAmount(), fromAccount.getBalance().getAmount()));
+                    System.out.println(String.format("Account_%s credit:%s, balance:%s", toAccount.getAcctNo(), amount.getAmount(), toAccount.getBalance().getAmount()));
+                }
+            }
+        }
+    }
+}
+```
+
 ## 在协作对象之间发生的死锁
 ## 开放调用
 ## 资源死锁
