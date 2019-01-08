@@ -1,9 +1,9 @@
 避免活跃性危险
 ---
->在安全性与活跃性之间通常存在着某种制衡。我们使用加锁机制来确保线程安全，但如果过度使用加锁，则可能导致锁顺序死锁（Lock-Ordering DeadLock）。
->同样，我们使用线程池和信号量来限制对资源的使用，但这些限制的行为可能会导致资源死锁（Resource Deadlock）。
->Java应用程序无法从死锁中国恢复过来，因此在设计时一定要排除那些可能导致死锁出现的条件。
->本章将结束一些导致活跃性故障的原因，以及如何避免他们。
+>在安全性与活跃性之间通常存在着某种制衡。我们使用加锁机制来确保线程安全，但如果过度使用加锁，则可能导致`锁顺序死锁`（Lock-Ordering DeadLock）。  
+>同样，我们使用线程池和信号量来限制对资源的使用，但这些限制的行为可能会导致`资源死锁`（Resource Deadlock）。  
+>Java应用程序无法从死锁中恢复过来，因此在设计时一定要排除那些可能导致死锁出现的条件。  
+>本章将结束一些导致活跃性故障的原因，以及如何避免他们。  
 
 <!-- TOC -->
 
@@ -13,7 +13,7 @@
         - [在transferMoney中如何发生死锁？](#在transfermoney中如何发生死锁)
         - [在典型条件下会发生死锁的循环](#在典型条件下会发生死锁的循环)
     - [在协作对象之间发生的死锁](#在协作对象之间发生的死锁)
-    - [开放调用](#开放调用)
+    - [开放调用（Open Call）](#开放调用open-call)
     - [资源死锁](#资源死锁)
 - [死锁的避免与诊断](#死锁的避免与诊断)
     - [支持定时的锁](#支持定时的锁)
@@ -246,7 +246,124 @@ public class TransferMoneyNoOrder {
 ```
 
 ## 在协作对象之间发生的死锁
-## 开放调用
+某些获取多个锁的操作并不像在LeftRightDeadlock或transferMonet中那么明显，这两个锁并不一定必须在同一个方法中被获取。
+
+```java 
+/*在相互协作对象之间的锁顺序死锁（不要这么做）*/
+//两个相互协作的类，在出租车调度系统中可能会用到它们
+//Taxi代表一个出租车对象，包含位置和目的地两个属性
+class Taxi{
+    @GuardBy("this") private Point location,destination;
+    private final Dispatcher dispatcher;
+
+    public Taxi(Dispatcher dispatcher){
+        this.dispatcher=dispatcher;
+    }
+
+    public synchronized Point getLocation(){
+        return location;
+    }
+
+    public synchronized void setLocation(Point location){
+        //Taxi先获取Taxi的锁，再获取Dispatcher的锁
+        this.location=location;
+        if(location.equals(destination)){
+            dispatcher.notifyAvaliable(this);
+        }
+    }
+}
+
+//Dispatcher代表一个出租车车队
+class Dispatcher{
+    @GuardBy("this") private final Set<Taxi> taxis;
+    @GuardBy("this") private final Set<Taxi> availableTaxis;
+
+    public Dispatcher(){
+        taxis=new HashSet<Taxi>();
+        availableTaxis=new HashSet<Taxi>();
+    }
+
+    public synchronized void notifyAvaliable(Taxi taxi){
+        availableTaxis.add(taxi);
+    }
+
+    public synchronized Image getImage(){
+        Image image=new Image();
+        //Dispatcher先获取Dispatcher的锁，再获取Taxi的锁
+        for(Taxi taxi:taxis){
+            image.drawMarker(t.getLocation());
+        }
+        return image;
+    }
+}
+```
+如果在持有锁的情况下调用某个外部方法，那么久需要警惕死锁：因为这个外部方法可能会获取其他锁，而这可能会产生死锁，或者阻塞时间过长，导致其他线程无法及时获得当前被持有的锁；
+
+## 开放调用（Open Call）
+1. 如果调用某个方法时`不需要持有锁`，那么这种调用被称为开放调用；
+2. 依赖开放调用的类通常能表现出更好的行为，并且与那些在调用方法时需要持有锁的类相比，也更`容易编写`；
+3. 在程序中应尽量使用开放调用。与那些在持有锁时调用外部方法的程序相比，更易于对依赖于开放调用的程序进行`死锁分析`；
+
+```java
+/*通过公开调用来避免在相互协作的对象之间产生死锁*/
+@ThreadSafe
+class Taxi{
+    @GuardBy("this") private Point location,destination;
+    private final Dispatcher dispatcher;
+
+    public Taxi(Dispatcher dispatcher){
+        this.dispatcher=dispatcher;
+    }
+
+    public synchronized Point getLocation(){
+        return location;
+    }
+
+    //开放调用，消除死锁风险
+    public void setLocation(Point location){
+        boolean reachedDestination;
+        //收缩同步代码块的保护范围可以提高伸缩性
+        //更新位置和通知出租车空闲状态可不必是原子操作
+        synchronized(this){
+            this.location=location;
+            reachedDestination=location.equals(destination);
+        }
+        if(reachedDestination){
+            dispatcher.notifyAvaliable(this);
+        }
+    }
+}
+
+@ThreadSafe
+class Dispatcher{
+    @GuardBy("this") private final Set<Taxi> taxis;
+    @GuardBy("this") private final Set<Taxi> availableTaxis;
+
+    public Dispatcher(){
+        taxis=new HashSet<Taxi>();
+        availableTaxis=new HashSet<Taxi>();
+    }
+
+    public synchronized void notifyAvaliable(Taxi taxi){
+        availableTaxis.add(taxi);
+    }
+
+    //开放调用，消除死锁风险
+    public  Image getImage(){
+        Set<Taxi> copy;
+        //同步块仅用于保护那些涉及共享状态的操作
+        synchronized(this){
+            copy=new HashSet<Taxi>(taxis);
+        }
+        Image image=new Image();
+        for(Taxi taxi:copy){
+            image.drawMarker(t.getLocation());
+        }
+        return image;
+    }
+}
+```
+
 ## 资源死锁
 
 # 死锁的避免与诊断
